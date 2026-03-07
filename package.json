@@ -1,0 +1,18 @@
+{
+  "name": "kuchiclaw",
+  "version": "0.1.0",
+  "description": "Minimal AI agent framework with Docker container isolation",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "cli": "tsx src/cli.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

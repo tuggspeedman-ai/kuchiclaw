@@ -1,0 +1,7 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kuchiclaw-agent
+    stdin_open: true
