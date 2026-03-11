@@ -9,15 +9,28 @@ import {
   OUTPUT_END_MARKER,
 } from "./config.js";
 import type { ContainerInput, ContainerOutput } from "./types.js";
+import type { GroupPaths } from "./group-folder.js";
 
-export async function runContainer(input: ContainerInput): Promise<ContainerOutput> {
+export async function runContainer(input: ContainerInput, paths?: GroupPaths): Promise<ContainerOutput> {
   const containerName = `kuchiclaw-${Date.now()}`;
+
+  // Build volume mounts for living files
+  const mounts: string[] = [];
+  if (paths) {
+    // Global files — read-only
+    mounts.push("-v", `${paths.soul}:/workspace/SOUL.md:ro`);
+    mounts.push("-v", `${paths.tools}:/workspace/TOOLS.md:ro`);
+    // Per-group files — read-write (agent updates these)
+    mounts.push("-v", `${paths.memory}:/workspace/MEMORY.md`);
+    mounts.push("-v", `${paths.context}:/workspace/CONTEXT.md`);
+  }
 
   const args = [
     "run",
     "-i",           // Keep stdin open so we can write to it
     "--rm",          // Remove container after exit
     "--name", containerName,
+    ...mounts,
     CONTAINER_IMAGE,
   ];
 

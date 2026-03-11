@@ -6,6 +6,8 @@
 
 import { execSync } from "node:child_process";
 import { runContainer } from "./container-runner.js";
+import { ensureGroupFolder } from "./group-folder.js";
+import { insertMessage, getRecentMessages, formatHistory } from "./db.js";
 import type { ContainerInput } from "./types.js";
 
 async function readStdin(): Promise<string> {
@@ -55,33 +57,80 @@ function getSecrets(): Record<string, string> {
   process.exit(1);
 }
 
+/** Parse CLI flags from argv */
+function parseArgs(argv: string[]): { group: string; showHistory: boolean; promptArgs: string[] } {
+  const args = argv.slice(2);
+  let group = "main";
+  let showHistory = false;
+  const promptArgs: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--group" && i + 1 < args.length) {
+      group = args[++i];
+    } else if (args[i] === "--history") {
+      showHistory = true;
+    } else {
+      promptArgs.push(args[i]);
+    }
+  }
+
+  return { group, showHistory, promptArgs };
+}
+
 async function main() {
+  const { group, showHistory, promptArgs } = parseArgs(process.argv);
+
+  // --history: display recent conversation and exit
+  if (showHistory) {
+    const messages = getRecentMessages(group);
+    if (messages.length === 0) {
+      console.log(`No message history for group "${group}".`);
+    } else {
+      console.log(formatHistory(messages));
+    }
+    return;
+  }
+
   // Get prompt from args or stdin
-  const argsPrompt = process.argv.slice(2).join(" ");
+  const argsPrompt = promptArgs.join(" ");
   const stdinPrompt = await readStdin();
   const prompt = argsPrompt || stdinPrompt;
 
   if (!prompt) {
-    console.error("Usage: echo \"your prompt\" | npx tsx src/cli.ts");
-    console.error("   or: npx tsx src/cli.ts \"your prompt\"");
+    console.error("Usage: npx tsx src/cli.ts \"your prompt\"");
+    console.error("       npx tsx src/cli.ts --group mygroup \"your prompt\"");
+    console.error("       npx tsx src/cli.ts --history [--group mygroup]");
+    console.error("       echo \"your prompt\" | npx tsx src/cli.ts");
     process.exit(1);
   }
 
   const secrets = getSecrets();
+  const paths = ensureGroupFolder(group);
+
+  // Load recent history from SQLite for conversational context
+  const recentMessages = getRecentMessages(group);
+  const messageHistory = formatHistory(recentMessages);
+
+  // Store the user's prompt
+  insertMessage(group, "user", prompt);
 
   const input: ContainerInput = {
     prompt,
-    groupFolder: "main",
+    groupFolder: group,
     secrets,
+    messageHistory: messageHistory || undefined,
   };
 
-  console.error(`[KuchiClaw] Sending prompt to container: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`);
+  console.error(`[KuchiClaw] Group: ${group} | Prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`);
 
   try {
-    const output = await runContainer(input);
+    const output = await runContainer(input, paths);
 
     if (output.status === "success") {
-      console.log(output.result ?? "(no response)");
+      const result = output.result ?? "(no response)";
+      // Store the agent's response
+      insertMessage(group, "assistant", result);
+      console.log(result);
     } else {
       console.error(`[KuchiClaw] Agent error: ${output.error}`);
       process.exit(1);

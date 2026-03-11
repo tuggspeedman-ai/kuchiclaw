@@ -14,31 +14,37 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 - Docker containers for agent isolation (each session = ephemeral container)
 - Filesystem-based IPC (containers write JSON → host polls/validates/executes)
 - SQLite for persistent state (messages, sessions, groups, tasks)
-- Four living files: SOUL.md (identity, global, ro), TOOLS.md (capabilities, global, ro), MEMORY.md (durable facts, per-group, rw), CONTEXT.md (session scratchpad, per-group, rw)
+- Five living files: SOUL.md (identity, global, ro), TOOLS.md (capabilities, global, ro), MEMORY.md (durable facts, per-group, rw), CONTEXT.md (session scratchpad, per-group, rw), HEARTBEAT.md (scheduled self-maintenance tasks, global, ro — planned M7)
 - Authentication via Claude Max OAuth token — read from env vars or macOS keychain, passed to containers via stdin (never mounted)
 - Container runs as non-root `agent` user (Claude Code refuses bypassPermissions as root)
 - Telegram as primary messaging channel
 
 ## Current State
 
-M0 (scaffolding) and M1 (basic agent loop) are complete. Next up: M2 (persistent context + web tools).
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), and M3 (SQLite + message history) are complete. Next up: M4 (Telegram integration).
 
-Working flow: `npx tsx src/cli.ts "prompt"` → spawns ephemeral Docker container → Claude Agent SDK runs inside → response returned via sentinel markers.
+Working flow: `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
 
 ## Key Files
 
-**Implemented (M0-M1):**
-- `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, calls container runner
-- `src/container-runner.ts` — Spawns `docker run -i --rm`, passes ContainerInput via stdin, parses sentinel markers from stdout
-- `src/config.ts` — Constants: image name, sentinel markers, timeout
+**Implemented (M0-M3):**
+- `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
+- `src/container-runner.ts` — Spawns `docker run -i --rm` with living file mounts, passes ContainerInput via stdin, parses sentinel markers from stdout
+- `src/db.ts` — SQLite database: `messages` table, insert/query functions, history formatting
+- `src/group-folder.ts` — Manages per-group directory structure (MEMORY.md, CONTEXT.md, logs/)
+- `src/config.ts` — Constants: image name, sentinel markers, timeout, paths
 - `src/types.ts` — ContainerInput/ContainerOutput type definitions
-- `container/entrypoint.ts` — Runs inside Docker: reads stdin, invokes Claude Agent SDK `query()`, emits result between markers
+- `container/entrypoint.ts` — Runs inside Docker: reads stdin, builds system prompt from living files + message history, invokes Claude Agent SDK `query()`, emits result between markers
 - `container/package.json` — Container deps (claude-agent-sdk only)
 - `Dockerfile` — Node 20 slim + git + claude-agent-sdk + tsx, runs as non-root `agent` user
+- `SOUL.md` — Agent personality and behavior rules (global, read-only)
+- `TOOLS.md` — Available tools documentation (global, read-only)
+- `groups/main/MEMORY.md` — Per-group durable memory (read-write)
+- `groups/main/CONTEXT.md` — Per-group session scratchpad (read-write)
+- `data/kuchiclaw.db` — SQLite database (auto-created on first run)
 
 **Planned (future milestones):**
 - `src/index.ts` — Main orchestrator with polling loop (M5)
-- `src/db.ts` — SQLite schema and queries (M3)
 - `src/ipc.ts` — Filesystem IPC (M6)
 - `src/group-queue.ts` — Per-group FIFO queue (M5)
 - `src/task-scheduler.ts` — Cron/interval scheduled tasks (M7)
@@ -51,7 +57,7 @@ Working flow: `npx tsx src/cli.ts "prompt"` → spawns ephemeral Docker containe
 
 - TypeScript strict mode, ES modules
 - Keep files under ~200 lines; split when they grow
-- Minimal dependencies — host: better-sqlite3, node-telegram-bot-api, cron-parser. Container: claude-agent-sdk, web tool SDKs
+- Minimal dependencies — host: better-sqlite3, node-telegram-bot-api, cron-parser. Container: claude-agent-sdk (web tools are SDK built-in)
 - Comments explain WHY, not WHAT
 - No dashboards or web UIs — Telegram is the interface
 

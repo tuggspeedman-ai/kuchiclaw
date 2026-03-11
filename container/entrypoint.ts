@@ -5,6 +5,7 @@
 // between sentinel markers to stdout.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { readFileSync, existsSync } from "node:fs";
 
 const OUTPUT_START = "---KUCHICLAW_OUTPUT_START---";
 const OUTPUT_END = "---KUCHICLAW_OUTPUT_END---";
@@ -13,6 +14,8 @@ interface ContainerInput {
   prompt: string;
   groupFolder: string;
   secrets: Record<string, string>;
+  systemPrompt?: string;
+  messageHistory?: string;
 }
 
 interface ContainerOutput {
@@ -35,6 +38,28 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+/** Read a file if it exists, return empty string otherwise */
+function readIfExists(path: string): string {
+  if (existsSync(path)) return readFileSync(path, "utf-8");
+  return "";
+}
+
+/** Build system prompt from mounted living files */
+function buildSystemPrompt(): string {
+  const soul = readIfExists("/workspace/SOUL.md");
+  const tools = readIfExists("/workspace/TOOLS.md");
+  const memory = readIfExists("/workspace/MEMORY.md");
+  const context = readIfExists("/workspace/CONTEXT.md");
+
+  const parts: string[] = [];
+  if (soul) parts.push(soul);
+  if (tools) parts.push(tools);
+  if (memory) parts.push(memory);
+  if (context) parts.push(context);
+
+  return parts.join("\n\n---\n\n");
+}
+
 // Module-level so the catch handler can access it
 let sdkStderr = "";
 
@@ -50,6 +75,13 @@ async function main() {
     process.env.ANTHROPIC_API_KEY = input.secrets.ANTHROPIC_API_KEY;
   }
 
+  let systemPrompt = input.systemPrompt || buildSystemPrompt();
+
+  // Append message history so the agent sees recent conversation context
+  if (input.messageHistory) {
+    systemPrompt += "\n\n---\n\n" + input.messageHistory;
+  }
+
   // Run the agent — query() returns an async iterator of SDKMessage
   const session = query({
     prompt: input.prompt,
@@ -58,8 +90,9 @@ async function main() {
       allowDangerouslySkipPermissions: true,
       persistSession: false,
       maxTurns: 3,
-      tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+      tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
       cwd: "/workspace",
+      systemPrompt,
       stderr: (data: string) => { sdkStderr += data; },
     },
   });

@@ -6,6 +6,10 @@ export interface ContainerInput {
   sessionId?: string;
   groupFolder: string;
   secrets: Record<string, string>;
+  /** System prompt built from living files (SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md) */
+  systemPrompt?: string;
+  /** Recent message history formatted for injection into the prompt */
+  messageHistory?: string;
 }
 
 /** Output received from the container via stdout sentinel markers */
