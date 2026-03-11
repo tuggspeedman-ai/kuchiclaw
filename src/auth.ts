@@ -1,4 +1,4 @@
-// Authentication helpers — shared by cli.ts and bot.ts.
+// Authentication helpers — shared by cli.ts and index.ts.
 // Reads Claude auth tokens from env vars or macOS keychain.
 
 import { execSync } from "node:child_process";

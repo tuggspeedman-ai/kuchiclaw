@@ -24,3 +24,15 @@ export const OUTPUT_END_MARKER = "---KUCHICLAW_OUTPUT_END---";
 
 /** Container timeout in milliseconds (5 minutes default) */
 export const CONTAINER_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Max concurrent containers per group (per-group FIFO queue) */
+export const MAX_CONTAINERS_PER_GROUP = 2;
+
+/** Max retry attempts for failed container runs */
+export const MAX_RETRIES = 3;
+
+/** Base delay for exponential backoff on retries (ms). Delay = BASE_RETRY_MS * 2^(attempt-1) */
+export const BASE_RETRY_MS = 2000;
+
+/** Hard timeout for graceful shutdown — kill remaining containers after this (ms) */
+export const SHUTDOWN_TIMEOUT_MS = 60 * 1000;
