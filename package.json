@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "bot": "tsx src/bot.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,10 +14,12 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.5",
+    "@types/node-telegram-bot-api": "^0.64.14",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "better-sqlite3": "^12.6.2"
+    "better-sqlite3": "^12.6.2",
+    "node-telegram-bot-api": "^0.67.0"
   }
 }

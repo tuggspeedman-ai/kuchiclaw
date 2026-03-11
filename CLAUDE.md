@@ -21,14 +21,20 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 
 ## Current State
 
-M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), and M3 (SQLite + message history) are complete. Next up: M4 (Telegram integration).
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), and M4 (Telegram integration) are complete. Next up: M5 (orchestrator + queue).
 
-Working flow: `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
+Working flow (CLI): `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
+
+Working flow (Telegram): `TELEGRAM_BOT_TOKEN=xxx npx tsx src/bot.ts` → long-running process → receives Telegram messages → routes through same container-based agent loop → sends responses back to Telegram. All chats map to `main` group (M8 adds per-chat groups).
 
 ## Key Files
 
-**Implemented (M0-M3):**
+**Implemented (M0-M4):**
 - `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
+- `src/bot.ts` — Telegram bot entrypoint: long-running process, routes Telegram messages through container-based agent loop, all chats → `main` group
+- `src/auth.ts` — Authentication helpers: reads Claude auth tokens from env vars or macOS keychain (shared by cli.ts and bot.ts)
+- `src/channels/registry.ts` — Channel interface definition (connect, sendMessage, isConnected, ownsJid, disconnect) + IncomingMessage type
+- `src/channels/telegram.ts` — Telegram adapter: long polling via node-telegram-bot-api, /start and /status commands, message chunking, typing indicator
 - `src/container-runner.ts` — Spawns `docker run -i --rm` with living file mounts, passes ContainerInput via stdin, parses sentinel markers from stdout
 - `src/db.ts` — SQLite database: `messages` table, insert/query functions, history formatting
 - `src/group-folder.ts` — Manages per-group directory structure (MEMORY.md, CONTEXT.md, logs/)
@@ -48,7 +54,6 @@ Working flow: `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygro
 - `src/ipc.ts` — Filesystem IPC (M6)
 - `src/group-queue.ts` — Per-group FIFO queue (M5)
 - `src/task-scheduler.ts` — Cron/interval scheduled tasks (M7)
-- `src/channels/telegram.ts` — Telegram adapter (M4)
 
 **Reference:**
 - `project-plan.md` — Detailed milestones and architectural decisions
