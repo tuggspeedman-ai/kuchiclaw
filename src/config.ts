@@ -36,3 +36,18 @@ export const BASE_RETRY_MS = 2000;
 
 /** Hard timeout for graceful shutdown — kill remaining containers after this (ms) */
 export const SHUTDOWN_TIMEOUT_MS = 60 * 1000;
+
+/** Directory for IPC request files (containers write here, host polls) */
+export const IPC_DIR = path.join(DATA_DIR, "ipc");
+
+/** IPC polling interval (ms) */
+export const IPC_POLL_MS = 1000;
+
+/** Directory for failed IPC requests */
+export const IPC_ERRORS_DIR = path.join(IPC_DIR, "errors");
+
+/** Skills directory — CLI scripts/API wrappers mounted into containers */
+export const SKILLS_DIR = path.join(PROJECT_ROOT, "skills");
+
+/** MCP server config file */
+export const MCP_SERVERS_PATH = path.join(PROJECT_ROOT, "mcp-servers.json");

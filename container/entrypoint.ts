@@ -10,12 +10,20 @@ import { readFileSync, existsSync } from "node:fs";
 const OUTPUT_START = "---KUCHICLAW_OUTPUT_START---";
 const OUTPUT_END = "---KUCHICLAW_OUTPUT_END---";
 
+interface McpServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
 interface ContainerInput {
   prompt: string;
   groupFolder: string;
+  chatId?: string;
   secrets: Record<string, string>;
   systemPrompt?: string;
   messageHistory?: string;
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 interface ContainerOutput {
@@ -82,19 +90,27 @@ async function main() {
     systemPrompt += "\n\n---\n\n" + input.messageHistory;
   }
 
+  // Build SDK options
+  const sdkOptions: Record<string, unknown> = {
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    persistSession: false,
+    maxTurns: 3,
+    tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+    cwd: "/workspace",
+    systemPrompt,
+    stderr: (data: string) => { sdkStderr += data; },
+  };
+
+  // Pass MCP servers to SDK if configured
+  if (input.mcpServers && Object.keys(input.mcpServers).length > 0) {
+    sdkOptions.mcpServers = input.mcpServers;
+  }
+
   // Run the agent — query() returns an async iterator of SDKMessage
   const session = query({
     prompt: input.prompt,
-    options: {
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      persistSession: false,
-      maxTurns: 3,
-      tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
-      cwd: "/workspace",
-      systemPrompt,
-      stderr: (data: string) => { sdkStderr += data; },
-    },
+    options: sdkOptions,
   });
 
   let resultText = "";

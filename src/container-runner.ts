@@ -14,7 +14,7 @@ import type { GroupPaths } from "./group-folder.js";
 export async function runContainer(input: ContainerInput, paths?: GroupPaths): Promise<ContainerOutput> {
   const containerName = `kuchiclaw-${Date.now()}`;
 
-  // Build volume mounts for living files
+  // Build volume mounts for living files, IPC, and skills
   const mounts: string[] = [];
   if (paths) {
     // Global files — read-only
@@ -23,6 +23,10 @@ export async function runContainer(input: ContainerInput, paths?: GroupPaths): P
     // Per-group files — read-write (agent updates these)
     mounts.push("-v", `${paths.memory}:/workspace/MEMORY.md`);
     mounts.push("-v", `${paths.context}:/workspace/CONTEXT.md`);
+    // IPC directory — agent writes JSON requests, host polls and executes
+    mounts.push("-v", `${paths.ipc}:/workspace/ipc`);
+    // Skills directory — CLI scripts/API wrappers (read-only)
+    mounts.push("-v", `${paths.skills}:/workspace/skills:ro`);
   }
 
   const args = [

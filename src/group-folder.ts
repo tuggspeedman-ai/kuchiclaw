@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { GROUPS_DIR, PROJECT_ROOT } from "./config.js";
+import { GROUPS_DIR, PROJECT_ROOT, IPC_DIR, SKILLS_DIR } from "./config.js";
 
 export interface GroupPaths {
   /** Root of this group's folder (e.g., groups/main/) */
@@ -18,6 +18,10 @@ export interface GroupPaths {
   soul: string;
   /** Global TOOLS.md (read-only, shared across groups) */
   tools: string;
+  /** Host IPC directory — containers write requests here */
+  ipc: string;
+  /** Skills directory — CLI scripts mounted read-only */
+  skills: string;
 }
 
 /** Ensure a group folder exists with all required files, return paths. */
@@ -30,10 +34,15 @@ export function ensureGroupFolder(groupName: string): GroupPaths {
     logs: path.join(root, "logs"),
     soul: path.join(PROJECT_ROOT, "SOUL.md"),
     tools: path.join(PROJECT_ROOT, "TOOLS.md"),
+    ipc: IPC_DIR,
+    skills: SKILLS_DIR,
   };
 
   // Create group directory and logs/
   fs.mkdirSync(paths.logs, { recursive: true });
+
+  // Ensure IPC directory exists
+  fs.mkdirSync(IPC_DIR, { recursive: true });
 
   // Seed MEMORY.md if it doesn't exist
   if (!fs.existsSync(paths.memory)) {

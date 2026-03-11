@@ -6,7 +6,7 @@ import { runContainer } from "./container-runner.js";
 import { ensureGroupFolder } from "./group-folder.js";
 import { insertMessage, getRecentMessages, formatHistory } from "./db.js";
 import { MAX_CONTAINERS_PER_GROUP, MAX_RETRIES, BASE_RETRY_MS } from "./config.js";
-import type { ContainerInput } from "./types.js";
+import type { ContainerInput, McpServerConfig } from "./types.js";
 import type { Channel } from "./channels/registry.js";
 
 export interface Job {
@@ -16,6 +16,7 @@ export interface Job {
   text: string;
   secrets: Record<string, string>;
   channel: Channel;
+  mcpServers?: Record<string, McpServerConfig>;
   attempt: number;
 }
 
@@ -82,8 +83,10 @@ async function executeJob(job: Job): Promise<void> {
   const input: ContainerInput = {
     prompt: text,
     groupFolder: group,
+    chatId,
     secrets,
     messageHistory: messageHistory || undefined,
+    mcpServers: job.mcpServers,
   };
 
   console.log(`[Queue] Running job for ${senderName} (group: ${group}, attempt: ${job.attempt}/${MAX_RETRIES})`);
