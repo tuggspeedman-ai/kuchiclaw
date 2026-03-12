@@ -12,10 +12,9 @@ import { insertMessage } from "./db.js";
 import { enqueue, shutdown as shutdownQueue } from "./group-queue.js";
 import { registerSender, startPolling, stopPolling } from "./ipc.js";
 import { startScheduler, stopScheduler } from "./task-scheduler.js";
+import { chatIdToGroup } from "./group-mapping.js";
 import { SHUTDOWN_TIMEOUT_MS, MCP_SERVERS_PATH } from "./config.js";
 import type { McpServerConfig } from "./types.js";
-
-const GROUP = "main"; // All chats → main group until M8
 
 /** Load MCP server configs from mcp-servers.json (if it exists) */
 function loadMcpServers(): Record<string, McpServerConfig> | undefined {
@@ -48,17 +47,27 @@ async function main(): Promise<void> {
   // Register the channel's sendMessage for IPC to use
   registerSender((chatId, text) => channel.sendMessage(chatId, text));
 
-  channel.onMessage((msg) => {
-    // Store user message immediately (before queuing)
-    insertMessage(GROUP, "user", `[${msg.senderName}] ${msg.text}`);
+  const knownGroups = new Set<string>();
 
-    console.log(`[Orchestrator] ${msg.senderName} (chat ${msg.chatId}): "${msg.text.slice(0, 80)}${msg.text.length > 80 ? "..." : ""}"`);
+  channel.onMessage((msg) => {
+    const group = chatIdToGroup("tg", msg.chatId);
+
+    // Log first message from a new group
+    if (!knownGroups.has(group)) {
+      knownGroups.add(group);
+      console.log(`[Orchestrator] New group: ${group} (chat ${msg.chatId})`);
+    }
+
+    // Store user message immediately (before queuing)
+    insertMessage(group, "user", `[${msg.senderName}] ${msg.text}`);
+
+    console.log(`[Orchestrator] ${msg.senderName} (group: ${group}): "${msg.text.slice(0, 80)}${msg.text.length > 80 ? "..." : ""}"`);
 
     // Send typing indicator while message waits in queue / runs
     channel.sendTyping(msg.chatId).catch(() => {});
 
     enqueue({
-      group: GROUP,
+      group,
       chatId: msg.chatId,
       senderName: msg.senderName,
       text: msg.text,

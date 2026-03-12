@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { IPC_DIR, IPC_ERRORS_DIR, IPC_POLL_MS } from "./config.js";
-import { insertTask, updateTaskStatus, getTasksByGroup } from "./db.js";
+import { groupToChatId } from "./group-mapping.js";
+import { insertTask, updateTaskStatus, getTasksByGroup, getTaskById } from "./db.js";
 import type { IpcRequest } from "./types.js";
 
 /** Callback registry — the orchestrator registers channels so IPC can send messages */
@@ -62,10 +63,15 @@ async function poll(): Promise<void> {
 }
 
 /** Execute a validated IPC request */
-async function execute(request: IpcRequest): Promise<void> {
+export async function execute(request: IpcRequest): Promise<void> {
   // Validate required fields
   if (!request.op || !request.chatId || !request.group) {
     throw new Error(`Invalid IPC request: missing required fields (op, chatId, group)`);
+  }
+
+  // Authorization: non-main groups are scoped to their own chat and tasks
+  if (request.group !== "main") {
+    assertGroupAuthorized(request);
   }
 
   switch (request.op) {
@@ -92,6 +98,31 @@ async function execute(request: IpcRequest): Promise<void> {
 
     default:
       throw new Error(`Unknown IPC operation: ${request.op}`);
+  }
+}
+
+/**
+ * Enforce that a non-main group only acts on its own chat and tasks.
+ * The group's chatId is derived from the group name (e.g., "tg-123" → "123").
+ */
+function assertGroupAuthorized(request: IpcRequest): void {
+  const ownChatId = groupToChatId(request.group);
+
+  // Message ops: can only send to own chat
+  if (request.op === "message" && request.chatId !== ownChatId) {
+    throw new Error(
+      `Authorization denied: group "${request.group}" cannot message chat ${request.chatId}`
+    );
+  }
+
+  // Task status changes: verify the target task belongs to this group
+  if ((request.op === "task_pause" || request.op === "task_resume" || request.op === "task_cancel") && request.taskId) {
+    const task = getTaskById(request.taskId);
+    if (task && task.group_folder !== request.group) {
+      throw new Error(
+        `Authorization denied: group "${request.group}" cannot modify task ${request.taskId} (belongs to "${task.group_folder}")`
+      );
+    }
   }
 }
 

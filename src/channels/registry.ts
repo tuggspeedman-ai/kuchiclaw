@@ -9,6 +9,10 @@ export interface IncomingMessage {
   senderName: string;
   /** Message text content */
   text: string;
+  /** Chat type — used for @mention filtering (group chats require mention) */
+  chatType?: "private" | "group" | "supergroup" | "channel";
+  /** Platform-specific sender ID — used for allowlist checks */
+  senderId?: string;
 }
 
 /** A messaging channel (Telegram, WhatsApp, etc.) */

@@ -2,6 +2,7 @@
 // Implements the Channel interface from registry.ts.
 
 import TelegramBot from "node-telegram-bot-api";
+import { ALLOWED_SENDER_IDS } from "../config.js";
 import type { Channel, IncomingMessage } from "./registry.js";
 
 /** Max message length Telegram allows per message */
@@ -15,6 +16,7 @@ export class TelegramChannel implements Channel {
   private connected = false;
   private onMessageHandler: MessageHandler | null = null;
   private startTime = Date.now();
+  private botUsername = "";
 
   constructor(token: string) {
     this.token = token;
@@ -28,6 +30,10 @@ export class TelegramChannel implements Channel {
   async connect(): Promise<void> {
     this.bot = new TelegramBot(this.token, { polling: true });
     this.startTime = Date.now();
+
+    // Learn our own username for @mention detection in group chats
+    const me = await this.bot.getMe();
+    this.botUsername = me.username ?? "";
 
     // Bot commands
     this.bot.onText(/\/start/, (msg) => {
@@ -46,6 +52,24 @@ export class TelegramChannel implements Channel {
       if (!msg.text || msg.text.startsWith("/")) return;
       if (!this.onMessageHandler) return;
 
+      const senderId = msg.from?.id ? String(msg.from.id) : undefined;
+      const chatType = msg.chat.type as IncomingMessage["chatType"];
+
+      // Allowlist check — silently ignore senders not on the list
+      if (ALLOWED_SENDER_IDS.length > 0 && senderId && !ALLOWED_SENDER_IDS.includes(senderId)) {
+        return;
+      }
+
+      // Group chats require @mention to activate
+      let text = msg.text;
+      const isGroupChat = chatType === "group" || chatType === "supergroup";
+      if (isGroupChat && this.botUsername) {
+        const mentionTag = `@${this.botUsername}`;
+        if (!text.includes(mentionTag)) return;
+        text = text.replace(mentionTag, "").trim();
+        if (!text) return; // Nothing left after stripping mention
+      }
+
       const senderName =
         msg.from?.first_name ??
         msg.from?.username ??
@@ -54,12 +78,14 @@ export class TelegramChannel implements Channel {
       this.onMessageHandler({
         chatId: String(msg.chat.id),
         senderName,
-        text: msg.text,
+        text,
+        chatType,
+        senderId,
       });
     });
 
     this.connected = true;
-    console.log("[Telegram] Connected (long polling)");
+    console.log(`[Telegram] Connected (long polling) as @${this.botUsername}`);
   }
 
   async sendMessage(chatId: string, text: string): Promise<void> {

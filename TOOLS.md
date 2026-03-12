@@ -34,7 +34,8 @@ EOF
 
 - Use unique filenames (timestamp-based) to avoid collisions
 - The file is deleted after processing; failed requests are moved to `ipc/errors/`
-- Your chat ID is provided in the prompt context when available
+- Your group name and chat ID are in the **Session Context** section of your system prompt — use them for the `group` and `chatId` fields
+- **Scoping:** Non-main groups can only message their own chat and manage their own tasks. The `main` group has full access to all chats and tasks.
 
 **Create a scheduled task:**
 ```bash

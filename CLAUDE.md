@@ -21,29 +21,30 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 
 ## Current State
 
-M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), and M7 (scheduled tasks + heartbeat) are complete. Next up: M8 (multi-group isolation).
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), and M8 (multi-group isolation) are complete.
 
 Working flow (CLI): `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
 
-Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) → orchestrator connects Telegram channel, starts IPC polling, starts task scheduler (60s poll) → incoming messages stored in SQLite and enqueued in per-group FIFO queue → queue drains up to `MAX_CONTAINERS_PER_GROUP` (default 2) concurrent containers per group → container runs agent with skills/, ipc/, and HEARTBEAT.md mounted → agent can write IPC requests to send messages or manage scheduled tasks → response stored in SQLite and sent back to Telegram. Scheduled tasks (cron/interval/one-shot) enqueue into the same GroupQueue. MCP servers loaded from `mcp-servers.json` and passed to SDK. Failed containers retry with exponential backoff (max 3 attempts). Graceful shutdown on SIGINT/SIGTERM waits for running containers. All chats map to `main` group (M8 adds per-chat groups).
+Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) → orchestrator connects Telegram channel, starts IPC polling, starts task scheduler (60s poll) → each Telegram chat maps to its own isolated group via `chatIdToGroup("tg", chatId)` — one chat designated as `MAIN_CHAT_ID` maps to `main`, all others get `tg-{chatId}` → incoming messages stored in SQLite and enqueued in per-group FIFO queue → queue drains up to `MAX_CONTAINERS_PER_GROUP` (default 2) concurrent containers per group → container runs agent with skills/, ipc/, and HEARTBEAT.md mounted, plus `## Session Context` in system prompt (group name + chat ID) → agent can write IPC requests to send messages or manage scheduled tasks → response stored in SQLite and sent back to Telegram. Scheduled tasks (cron/interval/one-shot) enqueue into the same GroupQueue. MCP servers loaded from `mcp-servers.json` and passed to SDK. Failed containers retry with exponential backoff (max 3 attempts). Graceful shutdown on SIGINT/SIGTERM waits for running containers. Group chats require @mention to trigger the bot. Global sender allowlist via `ALLOWED_SENDER_IDS`. Non-main groups scoped to their own chat/tasks via IPC authorization; main group has full access.
 
 ## Key Files
 
-**Implemented (M0-M7):**
-- `src/index.ts` — Main orchestrator entrypoint: connects Telegram channel, starts IPC polling + task scheduler, loads MCP config, routes messages through per-group queue, graceful shutdown on SIGINT/SIGTERM
+**Implemented (M0-M8):**
+- `src/index.ts` — Main orchestrator entrypoint: connects Telegram channel, starts IPC polling + task scheduler, loads MCP config, routes messages through per-group queue via chatIdToGroup, graceful shutdown on SIGINT/SIGTERM
 - `src/group-queue.ts` — Per-group FIFO queue with per-group concurrency cap, exponential backoff retry, auth-failure detection, onComplete/onError callbacks for task logging
-- `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), moves failures to `errors/`
+- `src/group-mapping.ts` — Maps channel chat IDs to group folder names (`chatIdToGroup`, `groupToChatId`). MAIN_CHAT_ID is channel-qualified (e.g., `tg-402431039`)
+- `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), two-tier authorization (main=unrestricted, others=scoped to own chat/tasks), moves failures to `errors/`
 - `src/task-scheduler.ts` — Polls every 60s for due tasks, supports cron (via cron-parser), interval (with drift prevention), and one-shot schedules, enqueues into GroupQueue, in-flight tracking via Set
 - `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
 - `src/auth.ts` — Authentication helpers: reads Claude auth tokens from env vars or macOS keychain, collects skill secrets (FASTMAIL_API_TOKEN) from env (shared by cli.ts and index.ts)
-- `src/channels/registry.ts` — Channel interface definition (connect, sendMessage, isConnected, ownsJid, disconnect) + IncomingMessage type
-- `src/channels/telegram.ts` — Telegram adapter: long polling via node-telegram-bot-api, /start and /status commands, message chunking, typing indicator
+- `src/channels/registry.ts` — Channel interface definition (connect, sendMessage, isConnected, ownsJid, disconnect) + IncomingMessage type (with chatType, senderId)
+- `src/channels/telegram.ts` — Telegram adapter: long polling via node-telegram-bot-api, /start and /status commands, message chunking, typing indicator, @mention filtering for group chats, sender allowlist
 - `src/container-runner.ts` — Spawns `docker run -i --rm` with living file + IPC + skills mounts, passes ContainerInput via stdin, parses sentinel markers from stdout
 - `src/db.ts` — SQLite database: `messages`, `scheduled_tasks`, `task_run_logs` tables, insert/query functions, history formatting, `resetDb()` for test injection
 - `src/group-folder.ts` — Manages per-group directory structure (MEMORY.md, CONTEXT.md, logs/) and ensures IPC directory exists
-- `src/config.ts` — Constants: image name, sentinel markers, timeout, paths, queue config, IPC config, skills/MCP paths, scheduler poll interval
+- `src/config.ts` — Constants: image name, sentinel markers, timeout, paths, queue config, IPC config, skills/MCP paths, scheduler poll interval, MAIN_CHAT_ID, ALLOWED_SENDER_IDS
 - `src/types.ts` — ContainerInput/ContainerOutput/IpcRequest (with task ops)/McpServerConfig/ScheduledTask/TaskRunLog type definitions
-- `container/entrypoint.ts` — Runs inside Docker: reads stdin, sets all secrets as env vars, builds system prompt from living files (incl. HEARTBEAT.md) + message history, passes mcpServers to SDK `query()`, emits result between markers
+- `container/entrypoint.ts` — Runs inside Docker: reads stdin, sets all secrets as env vars, builds system prompt from living files (incl. HEARTBEAT.md) + Session Context (group + chatId) + message history, passes mcpServers to SDK `query()`, emits result between markers
 - `container/package.json` — Container deps (claude-agent-sdk only)
 - `Dockerfile` — Node 20 slim + git + claude-agent-sdk + tsx, runs as non-root `agent` user
 - `SOUL.md` — Agent personality and behavior rules (global, read-only)
@@ -70,7 +71,8 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 
 ## Task Tracking
 
-- Plans go in `project-plan.md`
+- Plan in `project-plan.md` (gitignored, internal working doc — checklists, implementation order, in-progress decisions)
+- Build, then update `ARCHITECTURE.md` (public, polished) with the clean version once a phase or major decision is complete
 - Active tasks in `tasks/todo.md` with checkable items
 - Check in before starting implementation
 - Mark items complete as you go
@@ -82,4 +84,4 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - Secrets passed via stdin, never mounted as files
 - IPC requests validated before execution
 - No personal account credentials — dedicated service accounts only
-- `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, etc.
+- `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, `MAIN_CHAT_ID` (channel-qualified, e.g., `tg-402431039`), `ALLOWED_SENDER_IDS` (comma-separated, optional).

@@ -84,6 +84,14 @@ async function main() {
 
   let systemPrompt = input.systemPrompt || buildSystemPrompt();
 
+  // Inject session context so the agent knows its group and chat ID (for IPC)
+  const contextParts: string[] = [];
+  if (input.groupFolder) contextParts.push(`Group: ${input.groupFolder}`);
+  if (input.chatId) contextParts.push(`Chat ID: ${input.chatId}`);
+  if (contextParts.length > 0) {
+    systemPrompt += "\n\n---\n\n## Session Context\n" + contextParts.join("\n");
+  }
+
   // Append message history so the agent sees recent conversation context
   if (input.messageHistory) {
     systemPrompt += "\n\n---\n\n" + input.messageHistory;

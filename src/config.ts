@@ -54,3 +54,11 @@ export const MCP_SERVERS_PATH = path.join(PROJECT_ROOT, "mcp-servers.json");
 
 /** Task scheduler polling interval (ms) */
 export const SCHEDULER_POLL_MS = 60_000;
+
+/** Channel-qualified chat ID that maps to the "main" group (e.g., "tg-123456789"). */
+export const MAIN_CHAT_ID = process.env.MAIN_CHAT_ID ?? "";
+
+/** Telegram user IDs allowed to interact with the bot. Empty = allow all. */
+export const ALLOWED_SENDER_IDS: string[] = process.env.ALLOWED_SENDER_IDS
+  ? process.env.ALLOWED_SENDER_IDS.split(",").map((s) => s.trim()).filter(Boolean)
+  : [];

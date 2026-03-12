@@ -158,6 +158,12 @@ export function getTasksByGroup(groupFolder: string): ScheduledTask[] {
   return stmt.all(groupFolder) as ScheduledTask[];
 }
 
+/** Get a single task by ID (for authorization checks). */
+export function getTaskById(taskId: number): ScheduledTask | undefined {
+  const stmt = getDb().prepare("SELECT * FROM scheduled_tasks WHERE id = ?");
+  return stmt.get(taskId) as ScheduledTask | undefined;
+}
+
 /** Update a task's status. */
 export function updateTaskStatus(taskId: number, status: "active" | "paused" | "completed"): boolean {
   const stmt = getDb().prepare("UPDATE scheduled_tasks SET status = ? WHERE id = ?");

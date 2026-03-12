@@ -1,0 +1,401 @@
+# KuchiClaw — Architecture
+
+("Kuchi" — a nickname meaning "tiny one." This is the tiny claw.)
+
+KuchiClaw is a minimal AI agent framework built from scratch for learning and personal use. It's inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) (~3,900 lines, 15 files), which itself is a lightweight alternative to [OpenClaw](https://openclaw.ai/) (434K lines, 3,680 files). The goal was to build the smallest version of this architecture that I fully understand.
+
+**Why build this?**
+1. Learn the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) hands-on — not tutorials, a real project
+2. Understand OpenClaw's architecture by building a simpler version of it
+3. Build portfolio credibility as an AI Builder — code quality, clear documentation, and thoughtful decisions matter
+4. Actually use it for personal automation
+
+---
+
+## System Overview
+
+KuchiClaw is a single Node.js process that orchestrates AI agent sessions inside ephemeral Docker containers. Each user message triggers a fresh container with the Claude Agent SDK, isolated filesystem mounts, and injected conversation history. The agent runs, responds, and the container is destroyed.
+
+```
+Telegram ──→ Orchestrator ──→ Per-Group Queue ──→ Container Runner ──→ Docker
+   ↑              │                                      │
+   │              │                                      ↓
+   │         ┌────┴────┐                          ┌─────────────┐
+   │         │ SQLite  │                          │  Container  │
+   │         │messages │                          │ Claude SDK  │
+   │         │ tasks   │                          │ SOUL.md (ro)│
+   │         └─────────┘                          │ TOOLS.md(ro)│
+   │                                              │ MEMORY (rw) │
+   │              IPC Poller ←── JSON files ←──── │ CONTEXT(rw) │
+   │              │                               │ skills/ (ro)│
+   └──────────────┘                               └─────────────┘
+```
+
+**Key properties:**
+- **Container isolation** — each agent session runs in its own Docker container. The container can only see explicitly mounted directories. This is the security boundary.
+- **Filesystem-based IPC** — containers communicate with the host by writing JSON files to a mounted directory. The host polls, validates, executes, and cleans up. No sockets, no HTTP servers inside containers.
+- **Living files** — markdown files that persist across sessions, giving the agent identity, memory, and context.
+- **Per-group isolation** — each Telegram chat gets its own memory, context, and IPC authorization scope.
+
+---
+
+## Design Decisions
+
+### Living Files: Four-File Memory System
+
+OpenClaw uses 6+ markdown files. NanoClaw simplifies to a single `CLAUDE.md` per group. KuchiClaw uses four files with clean separation across two dimensions:
+
+| | Global (shared) | Per-group (isolated) |
+|---|---|---|
+| **Static reference** | SOUL.md (identity/rules), TOOLS.md (capabilities) | — |
+| **Durable memory** | — | MEMORY.md (curated facts) |
+| **Working memory** | — | CONTEXT.md (session scratchpad) |
+
+- **SOUL.md** — personality, behavior rules, boundaries. Read-only mount. Same for every session, every group.
+- **TOOLS.md** — documents available tools, usage patterns, and constraints. Read-only mount. Updated as skills are added.
+- **MEMORY.md** — per-group long-lived curated facts (preferences, decisions, knowledge). Read-write mount. Only grows with durable information. The agent writes corrections to a `## Lessons` section immediately when corrected (Behavior Loop pattern).
+- **CONTEXT.md** — per-group session working memory. Read-write mount. Scratchpad for session notes. Can be compacted or rotated without losing anything valuable.
+
+A fifth file, **HEARTBEAT.md**, was added later as a global read-only checklist for scheduled self-maintenance tasks (email inbox checks, memory housekeeping).
+
+### Container Strategy
+
+Same as NanoClaw. The container IS the security boundary. Each agent invocation gets its own ephemeral container (`docker run -i --rm`) with only explicitly mounted paths visible. Secrets are passed via stdin — never written to disk or mounted as files. The container runs as a non-root `agent` user (Claude Code refuses `bypassPermissions` as root).
+
+The container image is ~698MB due to the Claude Agent SDK bundle. No browser is needed — the SDK's built-in `WebSearch` and `WebFetch` tools work inside containers.
+
+### IPC Mechanism
+
+Filesystem-based JSON polling, same as NanoClaw. Containers write JSON request files to a mounted `/workspace/ipc/` directory. The host polls every second, validates each request against authorization rules, executes it, and deletes the file (or moves it to `errors/` on failure).
+
+Two-tier authorization: the main group has unrestricted IPC access (can message any chat, manage any group's tasks). Non-main groups are scoped to their own chat and tasks only.
+
+### Two-Tier Skills System
+
+Skills extend what the agent can do. KuchiClaw supports two tiers that coexist:
+
+1. **Simple skills** (CLI scripts + TOOLS.md docs) — scripts in `skills/` mounted read-only into the container. The agent reads TOOLS.md for usage docs and shells out. No protocol overhead. Example: `node skills/fastmail.mjs send "to" "subject" "body"`.
+
+2. **MCP skills** (Model Context Protocol servers) — standard MCP servers passed to the SDK via `mcpServers` config. The SDK auto-discovers tools and handles invocation. Used when an MCP server already exists or when structured tool schemas add value.
+
+Adding a new skill = drop a script in `skills/` + document in TOOLS.md, or add an entry to `mcp-servers.json`.
+
+### Session Continuity
+
+The problem: if a user says "Plan a trip to Japan", then "Check the cron job", then "What about hotels for the Japan trip?" — how does the agent connect message 3 back to message 1?
+
+Three approaches were considered:
+- **Option A: Always resume last session** — breaks on interleaved topics
+- **Option B: Living files as the safety net** — MEMORY.md has durable facts. Even without session continuity, the agent knows about the trip
+- **Option C: Recent message history** — last N messages from SQLite in the prompt. Claude naturally connects related topics
+
+**KuchiClaw uses B+C combined.** No session ID resumption. Each invocation is a fresh container. Continuity comes from MEMORY.md (durable facts) + recent message history from SQLite (conversational context). Session resumption is a possible future optimization, not a requirement.
+
+### Context Compaction
+
+Phased approach:
+- **Phase 1:** Fresh session each invocation. Agent writes durable facts to MEMORY.md, session notes to CONTEXT.md.
+- **Phase 2:** Pre-session context flush — before a session ends, persist anything important to MEMORY.md. CONTEXT.md can then be safely rotated.
+- **Phase 3 (if needed):** Full in-session compaction — summarize old messages when approaching context limits. Only worth building if sessions regularly hit the context window.
+
+### Database
+
+SQLite via `better-sqlite3`. Synchronous API is fine for a single-process orchestrator. Tables: `messages` (conversation history), `scheduled_tasks` (cron/interval/once), `task_run_logs` (execution history).
+
+### Channel Abstraction
+
+Telegram-first, but a minimal 5-method `Channel` interface (`connect`, `sendMessage`, `isConnected`, `ownsJid`, `disconnect`) makes adding other channels straightforward. Group/supergroup chats require @mention to trigger the bot. DMs always trigger. Unknown senders are filtered via an allowlist.
+
+### Multi-Group Isolation
+
+Each Telegram chat maps to its own group folder with isolated MEMORY.md and CONTEXT.md:
+
+```
+Global (shared):     SOUL.md, TOOLS.md, HEARTBEAT.md
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+  groups/tg-123456/  groups/tg--1001234/ groups/main/
+   MEMORY.md          MEMORY.md          MEMORY.md
+   CONTEXT.md         CONTEXT.md         CONTEXT.md
+```
+
+Group folder naming uses `{channel}-{chatId}` (e.g., `tg-123456789`), extensible for future channels (`wa-` for WhatsApp). One configured chat maps to `main` — the admin group with unrestricted IPC access.
+
+### Authentication
+
+Claude Max OAuth token, read from environment variables or macOS keychain. Passed to containers via stdin — never mounted as files. Skill-specific secrets (e.g., `FASTMAIL_API_TOKEN`) flow through the same stdin mechanism.
+
+---
+
+## Implementation Phases
+
+The system was built incrementally. Each phase produced an end-to-end testable system. The sequencing was deliberate: SQLite was built before Telegram (you can't meaningfully integrate a messaging channel without persisting messages), and the queue was split from Telegram (get a working bot first, add concurrency control later).
+
+### Phase 0: Scaffolding
+
+TypeScript project with Docker setup. `npm run build` succeeds, `docker build` produces a working image.
+
+### Phase 1: Basic Agent Loop (CLI)
+
+Proved container isolation + IPC works end-to-end. Built the container runner (`docker run -i --rm` with proper mounts), stdin/stdout communication with sentinel markers, and the in-container agent runner (reads prompt from stdin, invokes Claude Agent SDK, emits response between markers).
+
+`npx tsx src/cli.ts "What is 2+2?"` → spawns container → returns Claude's answer.
+
+**Key files:** `src/cli.ts`, `src/container-runner.ts`, `container/entrypoint.ts`
+
+### Phase 2: Persistent Context + Web Tools
+
+Added the four-file living system. SOUL.md and TOOLS.md mounted read-only, MEMORY.md and CONTEXT.md read-write. System prompt built inside the container by reading mounted files + injected message history. CLI gained a `--group` flag.
+
+Evaluated SDK built-in `WebSearch` and `WebFetch` inside containers — they work without any external APIs, so Tavily and Firecrawl were unnecessary. No extra dependencies, no API keys.
+
+**Key files:** `src/group-folder.ts`, `SOUL.md`, `TOOLS.md`
+
+### Phase 3: SQLite + Message History
+
+Added `better-sqlite3` with WAL mode. Single `messages` table. Last 20 messages loaded from SQLite and injected into the system prompt, giving Claude conversational context across invocations. CLI gained a `--history` flag.
+
+**Key files:** `src/db.ts`
+
+### Phase 4: Telegram Integration
+
+Telegram became the primary input/output channel via `node-telegram-bot-api` (long polling). Implemented the 5-method `Channel` interface. Added `/start` and `/status` bot commands, message chunking for responses exceeding Telegram's 4096-char limit, and typing indicators.
+
+Auth logic was extracted into shared `src/auth.ts` (used by both CLI and orchestrator entrypoints).
+
+**Key files:** `src/channels/telegram.ts`, `src/channels/registry.ts`, `src/auth.ts`
+
+### Phase 5: Orchestrator + Queue
+
+Added per-group FIFO queue with concurrency control (`MAX_CONTAINERS_PER_GROUP = 2`). Retry with exponential backoff (`2000ms * 2^(attempt-1)`, max 3 retries). Auth failures fail immediately. Graceful shutdown on SIGINT/SIGTERM waits for running containers with a 60s hard timeout.
+
+`src/index.ts` replaced `src/bot.ts` as the primary entrypoint. CLI kept for one-off testing.
+
+**Key files:** `src/index.ts`, `src/group-queue.ts`
+
+### Phase 6: IPC + Skills System
+
+Containers gained the ability to trigger host-side actions via IPC. The host polls `data/ipc/` for JSON request files, validates authorization, and executes (currently: send messages to any Telegram chat).
+
+Built the two-tier skills system. First real skill: FastMail JMAP integration (`skills/fastmail.mjs`) — send, read, reply to email via CLI wrapper around the JMAP API. MCP server plumbing wired through `mcp-servers.json` → ContainerInput → SDK `query()`.
+
+Added `dotenv` for `.env` loading in entrypoints.
+
+**Key files:** `src/ipc.ts`, `skills/`, `mcp-servers.json`
+
+### Phase 7: Scheduled Tasks + Heartbeat
+
+Added a task scheduler (60s poll loop) supporting cron, interval, and one-shot tasks. Tasks are rows in `scheduled_tasks` — no hardcoded tasks, everything is dynamic. The scheduler enqueues due tasks into the same GroupQueue used for Telegram messages, maintaining execution isolation.
+
+Interval drift prevention: advance `next_run` from previous scheduled time, not `Date.now()`. In-flight tracking via `Set<number>` prevents double-enqueue if a task takes longer than the poll interval.
+
+Created `HEARTBEAT.md` — a global read-only living file with self-maintenance checklists (email inbox every ~4h, memory housekeeping daily). The heartbeat is a regular scheduled task, not a special system — it's created via IPC or manual DB insert.
+
+Added vitest with 16 tests covering DB CRUD, task scheduling logic, and drift prevention.
+
+**Key files:** `src/task-scheduler.ts`, `HEARTBEAT.md`
+
+### Phase 8: Multi-Group Isolation
+
+Each Telegram chat gets its own group folder with isolated MEMORY.md and CONTEXT.md. Group mapping via `chatIdToGroup()` with channel prefix (`tg-{chatId}`). @mention detection: bot calls `getMe()` on connect, group chats require `@botUsername` mention, DMs always trigger.
+
+IPC authorization enforced per-group: non-main groups scoped to their own chat and tasks. Main group unrestricted.
+
+Global sender allowlist via `ALLOWED_SENDER_IDS` env var.
+
+**Key files:** `src/group-mapping.ts`, `src/channels/telegram.ts`, `src/index.ts`, `src/ipc.ts`
+
+### Phase Sequencing Rationale
+
+1. **Phase 0 (Scaffolding)** — Docker image needed before anything else works
+2. **Phase 3 (SQLite) before Phase 4 (Telegram)** — you can't meaningfully integrate a messaging channel without persisting messages
+3. **Phases 5-6 (Queue + IPC) split from Telegram** — get a working bot first, add concurrency and IPC after. This gave us a working bot earlier
+4. **Multi-Group kept last** — refinement of isolation, not a core capability. Everything works with a single group first
+
+---
+
+## Security Model
+
+- **Containers are the security boundary** — agents see only mounted directories
+- **Read-only mounts by default** — MEMORY.md and CONTEXT.md are the exceptions
+- **Secrets via stdin, never files** — auth tokens and API keys passed through ContainerInput, set as env vars inside the container
+- **IPC authorization** — every request validated before execution. Non-main groups scoped to own data
+- **Non-root container user** — Claude Code refuses `bypassPermissions` as root
+- **No personal account credentials** — dedicated service accounts only
+- **Sender allowlist** — unknown Telegram users silently ignored
+
+---
+
+## File Structure
+
+```
+kuchiclaw/
+├── ARCHITECTURE.md                 # This document
+├── CLAUDE.md                       # Project conventions for AI assistants
+├── SOUL.md                         # Agent personality/rules (global, ro)
+├── TOOLS.md                        # Agent tool documentation (global, ro)
+├── HEARTBEAT.md                    # Self-maintenance checklist (global, ro)
+├── mcp-servers.json                # MCP server configs for skills tier 2
+├── Dockerfile                      # Agent container image
+├── docker-compose.yml
+├── src/
+│   ├── index.ts                    # Main orchestrator entrypoint
+│   ├── cli.ts                      # CLI entrypoint (testing)
+│   ├── auth.ts                     # Auth helpers (keychain, env vars, skill secrets)
+│   ├── container-runner.ts         # Docker container lifecycle
+│   ├── db.ts                       # SQLite schema + queries
+│   ├── group-folder.ts             # Per-group directory management
+│   ├── group-mapping.ts            # Chat ID → group folder mapping
+│   ├── group-queue.ts              # Per-group FIFO queue with concurrency
+│   ├── ipc.ts                      # Filesystem IPC polling + authorization
+│   ├── task-scheduler.ts           # Cron/interval/once scheduler
+│   ├── config.ts                   # Configuration constants
+│   ├── types.ts                    # Shared type definitions
+│   └── channels/
+│       ├── telegram.ts             # Telegram adapter (long polling, @mention, allowlist)
+│       └── registry.ts             # Channel interface definition
+├── container/
+│   ├── entrypoint.ts               # Runs inside Docker (reads stdin, builds prompt, calls SDK)
+│   └── package.json                # Container-specific deps (claude-agent-sdk only)
+├── skills/                         # Simple skills — CLI scripts/API wrappers (ro mount)
+│   └── fastmail.mjs                # Email via JMAP (send, inbox, read, reply)
+├── groups/
+│   └── main/
+│       ├── MEMORY.md               # Long-lived curated facts (per-group, rw)
+│       ├── CONTEXT.md              # Session working memory (per-group, rw)
+│       └── logs/
+└── data/
+    ├── kuchiclaw.db                # SQLite database
+    └── ipc/                        # IPC request directory
+```
+
+---
+
+## Dependencies
+
+Minimal by design. Host and container dependencies are kept separate.
+
+**Host process:**
+
+| Package | Purpose |
+|---------|---------|
+| `better-sqlite3` | SQLite database |
+| `node-telegram-bot-api` | Telegram integration |
+| `cron-parser` | Cron expression parsing for scheduler |
+| `dotenv` | `.env` file loading |
+
+**Inside container:**
+
+| Package | Purpose |
+|---------|---------|
+| `@anthropic-ai/claude-agent-sdk` | Agent runtime (bundles CLI + web tools) |
+
+**Dev:**
+
+| Package | Purpose |
+|---------|---------|
+| `vitest` | Test runner |
+
+TypeScript, tsx, and Docker are dev/build tools.
+
+---
+
+## Deployment
+
+Deployment can happen anytime after Telegram works. Feature milestones can be developed locally and deployed incrementally.
+
+**Requirements:**
+- Docker runtime on the host (orchestrator spawns ephemeral containers — needs a bare VPS, not a managed container platform)
+- Persistent storage for SQLite, group folders, and living files
+- Outbound HTTPS for Claude API, Telegram API, and FastMail JMAP
+- No inbound ports needed (Telegram long polling)
+
+### Platform Decision: Hetzner Cloud VPS
+
+KuchiClaw's architecture (host process spawning ephemeral Docker containers) eliminates most PaaS options. Six platforms were evaluated:
+
+| Option | Verdict | Why |
+|--------|---------|-----|
+| **Hetzner Cloud** | **Selected** | Best price-performance, dedicated CPU from ~€5/mo, hourly billing, 20 TB bandwidth, full API/CLI/Terraform, active OpenClaw deployment community (31+ GitHub repos) |
+| **Contabo** | Rejected | CPU overselling well-documented (20-40% steal), sustained load triggers throttling. Dedicated CPU starts at ~$46/mo vs Hetzner's ~€5/mo. Weak backups ($7.34/mo add-on). No block storage |
+| **AWS Lightsail** | Rejected | Burstable CPU — $5-24/mo plans throttle when burst credits deplete. Container spawning burns credits fast. Unlimited burst starts at $44/mo |
+| **Hostinger** | Rejected | Promo pricing (~$6/mo) doubles on renewal (~$15/mo). 12-24 month commitment required. Single-snapshot backups (overwrites previous) |
+| **Railway** | Rejected | No Docker-in-Docker — loses OS-level container isolation |
+| **Fly.io** | Rejected | Persistent volume quirks, nested container spawning not straightforward |
+
+**Recommended plan: Hetzner CX22** (~€4.30/mo including IPv4) — 2 shared vCPU, 4 GB RAM, 40 GB NVMe SSD, 20 TB bandwidth. Upgrade path to CX32 (4 vCPU, 8 GB RAM, ~€6.80/mo) if RAM is tight with concurrent containers.
+
+```
+Hetzner CX22 (Nuremberg or Falkenstein)
+├── systemd service: kuchiclaw (Restart=always)
+│   ├── polls Telegram (long-polling, no inbound ports needed)
+│   ├── spawns Docker containers per agent invocation
+│   └── polls data/ipc/ for container requests
+├── /opt/kuchiclaw/
+│   ├── data/kuchiclaw.db (SQLite, WAL mode)
+│   ├── data/ipc/
+│   ├── groups/*/MEMORY.md, CONTEXT.md
+│   └── .env (chmod 600)
+└── Docker daemon (containers spawned on demand)
+```
+
+**Secrets management:**
+- Dev (macOS): auto-read from keychain, zero config
+- Production: `.env` file (chmod 600) with systemd `EnvironmentFile`
+- Secrets are never mounted into containers — always passed via stdin
+
+**Backup strategy:**
+- Hetzner auto-backups (~€0.86/mo, keeps 7 daily copies)
+- Living file backup via Git for versioned memory history
+- SQLite `.backup` to off-site storage as future enhancement
+
+---
+
+## Future Enhancements
+
+Deferred ideas worth revisiting once the core system is stable:
+
+- **Session ID resumption** — resume previous Claude sessions to reduce token usage and give richer context. Requires heuristics for when to resume vs start fresh.
+- **Tiered retrieval** — when MEMORY.md grows large, read section headers first (tier 1), then pull relevant sections (tier 2). Reduces token waste.
+- **Full in-session compaction** — summarize old messages when approaching context limits. Only needed if sessions regularly hit the context window.
+- **Score decay / staleness** — date-stamp facts in MEMORY.md, periodically review and prune stale entries via scheduled task.
+- **Daily logs** — `memory/YYYY-MM-DD.md` append-only logs alongside MEMORY.md. Auto-rotate, load today + yesterday only.
+- **Deduplication** — detect and merge near-duplicate facts in MEMORY.md (cosine similarity or LLM-based).
+- **Tavily / Firecrawl** — API-based web tools if SDK built-in WebSearch/WebFetch prove insufficient for JS-heavy or cluttered pages.
+- **Apple Container support** — native macOS containers for lower overhead on dev machines.
+- **WhatsApp channel** — second messaging adapter using the Channel interface.
+- **Email channel adapter** — email as an input channel (poll FastMail inbox via JMAP → route to agent → reply). Different from the FastMail skill (which lets the agent proactively send email).
+- **Crash recovery** — on startup, detect orphaned messages and re-enqueue them.
+- **Global container cap** — `MAX_CONCURRENT_CONTAINERS` across all groups, in addition to the per-group cap.
+- **Living file backup via Git** — periodic git commit + push of living files and SQLite to a private repo for versioned history.
+
+---
+
+## Prior Art
+
+KuchiClaw's architecture draws from two existing projects. Understanding them helps explain the design choices above.
+
+### NanoClaw (Primary Reference)
+
+[NanoClaw](https://github.com/qwibitai/nanoclaw) is a ~3,900-line Node.js/TypeScript framework that distills OpenClaw's concepts into 15 source files. Key components:
+
+- **Orchestrator** — single-process polling loop that routes messages to per-group queues, manages sessions with cursor-based tracking and rollback on failure
+- **Container Runner** — `docker run -i --rm` with isolated mounts, secrets via stdin, output via sentinel markers, configurable timeouts and idle detection
+- **Filesystem IPC** — containers write JSON to mounted directories, host polls/validates/executes with two-tier authorization
+- **Group Queue** — per-group FIFO with concurrency limits (`MAX_CONCURRENT_CONTAINERS = 5`), exponential backoff retry, task prioritization
+- **SQLite** — tables for chats, messages, scheduled tasks, task run logs, registered groups, sessions
+- **Task Scheduler** — 60s poll loop supporting cron, interval, and one-shot tasks with drift prevention
+
+### OpenClaw (High-Level Reference)
+
+[OpenClaw](https://openclaw.ai/) is a 196K-star, 434K-line personal AI assistant framework. Key patterns adopted:
+
+- **Living files** — SOUL.md, MEMORY.md, HEARTBEAT.md, TOOLS.md as persistent context loaded into agent sessions
+- **Gateway pattern** — single daemon owns all messaging surfaces
+- **Context compaction** — auto-summarize old messages near context limit, with memory flush before compaction
+- **Channel adapters** — normalize messages from different platforms to a common format
+
+### Claude Agent SDK
+
+TypeScript package `@anthropic-ai/claude-agent-sdk`. KuchiClaw uses `query()` for one-off stateless sessions (async iterator). Key options: `allowedTools`, `permissionMode: "bypassPermissions"`, `systemPrompt`, `mcpServers`. Built-in tools include Read, Edit, Write, Glob, Grep, Bash, WebSearch, and WebFetch.
