@@ -1,6 +1,6 @@
 node_modules/
 dist/
-*.db
+data/
 .env
 container/node_modules/
 project-plan.md
