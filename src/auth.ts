@@ -19,22 +19,31 @@ function readTokenFromKeychain(): string | null {
 
 /** Resolve auth secrets. Priority: env vars > macOS keychain. Exits on failure. */
 export function getSecrets(): Record<string, string> {
+  const secrets: Record<string, string> = {};
+
+  // Claude auth — required
   if (process.env.ANTHROPIC_API_KEY) {
-    return { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
-  }
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-    return { CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN };
+    secrets.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  } else if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    secrets.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  } else {
+    const keychainToken = readTokenFromKeychain();
+    if (keychainToken) {
+      secrets.CLAUDE_CODE_OAUTH_TOKEN = keychainToken;
+    } else {
+      console.error(
+        "Error: No auth token found.\n" +
+        "Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in your environment,\n" +
+        "or log in to Claude Code (the token is read from macOS keychain)."
+      );
+      process.exit(1);
+    }
   }
 
-  const keychainToken = readTokenFromKeychain();
-  if (keychainToken) {
-    return { CLAUDE_CODE_OAUTH_TOKEN: keychainToken };
+  // Optional skill secrets — passed through to container environment
+  if (process.env.FASTMAIL_API_TOKEN) {
+    secrets.FASTMAIL_API_TOKEN = process.env.FASTMAIL_API_TOKEN;
   }
 
-  console.error(
-    "Error: No auth token found.\n" +
-    "Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in your environment,\n" +
-    "or log in to Claude Code (the token is read from macOS keychain)."
-  );
-  process.exit(1);
+  return secrets;
 }

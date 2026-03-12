@@ -75,12 +75,9 @@ async function main() {
   const raw = await readStdin();
   const input: ContainerInput = JSON.parse(raw);
 
-  // Set auth token from secrets into environment so the SDK can use it
-  if (input.secrets.CLAUDE_CODE_OAUTH_TOKEN) {
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = input.secrets.CLAUDE_CODE_OAUTH_TOKEN;
-  }
-  if (input.secrets.ANTHROPIC_API_KEY) {
-    process.env.ANTHROPIC_API_KEY = input.secrets.ANTHROPIC_API_KEY;
+  // Set secrets into environment — auth tokens for SDK, skill tokens for scripts
+  for (const [key, value] of Object.entries(input.secrets)) {
+    process.env[key] = value;
   }
 
   let systemPrompt = input.systemPrompt || buildSystemPrompt();

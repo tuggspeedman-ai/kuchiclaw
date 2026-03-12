@@ -45,6 +45,33 @@ Scripts in `/workspace/skills/` provide additional capabilities. They are read-o
 bash /workspace/skills/echo.sh "your message"
 ```
 
+### fastmail (email)
+
+Send and read email as koochi@fastmail.com.
+
+**Send an email:**
+```bash
+node /workspace/skills/fastmail.mjs send "recipient@example.com" "Subject line" "Email body text"
+```
+
+**List recent inbox emails:**
+```bash
+node /workspace/skills/fastmail.mjs inbox        # default 10
+node /workspace/skills/fastmail.mjs inbox 5      # limit to 5
+```
+Output shows: unread marker (*), message ID, date, sender, subject.
+
+**Read a specific email:**
+```bash
+node /workspace/skills/fastmail.mjs read <messageId>
+```
+
+**Reply to an email:**
+```bash
+node /workspace/skills/fastmail.mjs reply <messageId> "Reply body text"
+```
+Threading headers (In-Reply-To, References) are set automatically.
+
 ## Workspace
 
 Your workspace is `/workspace`. You can read and write files here.

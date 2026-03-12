@@ -4,6 +4,7 @@
 // Usage: echo "What is 2+2?" | npx tsx src/cli.ts
 //    or: npx tsx src/cli.ts "What is 2+2?"
 
+import "dotenv/config";
 import { runContainer } from "./container-runner.js";
 import { ensureGroupFolder } from "./group-folder.js";
 import { insertMessage, getRecentMessages, formatHistory } from "./db.js";

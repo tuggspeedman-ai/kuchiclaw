@@ -2,8 +2,9 @@
 
 // Main orchestrator entrypoint — connects Telegram channel, routes messages
 // through the per-group queue, starts IPC polling, and handles graceful shutdown.
-// Usage: TELEGRAM_BOT_TOKEN=xxx npx tsx src/index.ts
+// Usage: npx tsx src/index.ts (reads TELEGRAM_BOT_TOKEN from .env)
 
+import "dotenv/config";
 import fs from "node:fs";
 import { TelegramChannel } from "./channels/telegram.js";
 import { getSecrets } from "./auth.js";
