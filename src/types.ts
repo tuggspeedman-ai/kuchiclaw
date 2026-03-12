@@ -26,13 +26,50 @@ export interface ContainerInput {
 /** IPC request written by the container to the mounted IPC directory */
 export interface IpcRequest {
   /** Operation type */
-  op: "message";
+  op: "message" | "task_create" | "task_pause" | "task_resume" | "task_cancel" | "task_list";
   /** Target chat ID */
   chatId: string;
-  /** Message text to send */
-  text: string;
+  /** Message text (for "message" op) */
+  text?: string;
   /** Group that originated this request (for authorization) */
   group: string;
+
+  // Task fields (for task_* ops)
+  /** Task prompt — what the agent should do when the task runs */
+  prompt?: string;
+  /** Schedule type */
+  scheduleType?: "cron" | "interval" | "once";
+  /** Cron expression, interval in ms, or ISO timestamp for one-shot */
+  scheduleValue?: string;
+  /** Human-readable task label */
+  label?: string;
+  /** Task ID (for pause/resume/cancel) */
+  taskId?: number;
+}
+
+/** A scheduled task stored in SQLite */
+export interface ScheduledTask {
+  id: number;
+  group_folder: string;
+  chat_id: string;
+  prompt: string;
+  schedule_type: "cron" | "interval" | "once";
+  schedule_value: string;
+  next_run: string; // ISO 8601
+  status: "active" | "paused" | "completed";
+  created_at: string;
+  label: string | null;
+}
+
+/** A log entry for a single task execution */
+export interface TaskRunLog {
+  id: number;
+  task_id: number;
+  run_at: string;
+  duration_ms: number | null;
+  status: "success" | "error";
+  result: string | null;
+  error: string | null;
 }
 
 /** Output received from the container via stdout sentinel markers */

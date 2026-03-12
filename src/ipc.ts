@@ -4,7 +4,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { CronExpressionParser } from "cron-parser";
 import { IPC_DIR, IPC_ERRORS_DIR, IPC_POLL_MS } from "./config.js";
+import { insertTask, updateTaskStatus, getTasksByGroup } from "./db.js";
 import type { IpcRequest } from "./types.js";
 
 /** Callback registry — the orchestrator registers channels so IPC can send messages */
@@ -74,9 +76,99 @@ async function execute(request: IpcRequest): Promise<void> {
       await sendMessage(request.chatId, request.text);
       break;
 
+    case "task_create":
+      await handleTaskCreate(request);
+      break;
+
+    case "task_pause":
+    case "task_resume":
+    case "task_cancel":
+      await handleTaskStatusChange(request);
+      break;
+
+    case "task_list":
+      await handleTaskList(request);
+      break;
+
     default:
       throw new Error(`Unknown IPC operation: ${request.op}`);
   }
+}
+
+// --- Task IPC handlers ---
+
+async function handleTaskCreate(req: IpcRequest): Promise<void> {
+  if (!req.prompt) throw new Error("task_create requires 'prompt'");
+  if (!req.scheduleType) throw new Error("task_create requires 'scheduleType'");
+  if (!req.scheduleValue) throw new Error("task_create requires 'scheduleValue'");
+
+  // Compute initial next_run
+  let nextRun: string;
+  switch (req.scheduleType) {
+    case "cron": {
+      // Validate cron expression and compute first run
+      const expr = CronExpressionParser.parse(req.scheduleValue, { tz: "UTC" });
+      nextRun = expr.next().toDate().toISOString();
+      break;
+    }
+    case "interval": {
+      const ms = parseInt(req.scheduleValue, 10);
+      if (isNaN(ms) || ms <= 0) throw new Error(`Invalid interval: ${req.scheduleValue}`);
+      nextRun = new Date(Date.now() + ms).toISOString();
+      break;
+    }
+    case "once": {
+      // scheduleValue is an ISO timestamp
+      const d = new Date(req.scheduleValue);
+      if (isNaN(d.getTime())) throw new Error(`Invalid date: ${req.scheduleValue}`);
+      nextRun = d.toISOString();
+      break;
+    }
+  }
+
+  const taskId = insertTask(
+    req.group, req.chatId, req.prompt,
+    req.scheduleType, req.scheduleValue, nextRun, req.label,
+  );
+
+  const label = req.label ? ` "${req.label}"` : "";
+  const msg = `Task ${taskId}${label} created (${req.scheduleType}). Next run: ${nextRun}`;
+  console.log(`[IPC] ${msg}`);
+  if (sendMessage) await sendMessage(req.chatId, msg);
+}
+
+async function handleTaskStatusChange(req: IpcRequest): Promise<void> {
+  if (!req.taskId) throw new Error(`${req.op} requires 'taskId'`);
+
+  const statusMap = {
+    task_pause: "paused" as const,
+    task_resume: "active" as const,
+    task_cancel: "completed" as const,
+  };
+  const newStatus = statusMap[req.op as keyof typeof statusMap];
+  const updated = updateTaskStatus(req.taskId, newStatus);
+
+  if (!updated) throw new Error(`Task ${req.taskId} not found`);
+
+  const msg = `Task ${req.taskId} → ${newStatus}`;
+  console.log(`[IPC] ${msg}`);
+  if (sendMessage) await sendMessage(req.chatId, msg);
+}
+
+async function handleTaskList(req: IpcRequest): Promise<void> {
+  const tasks = getTasksByGroup(req.group);
+
+  if (tasks.length === 0) {
+    if (sendMessage) await sendMessage(req.chatId, "No scheduled tasks.");
+    return;
+  }
+
+  const lines = tasks.map((t) => {
+    const label = t.label ? ` "${t.label}"` : "";
+    return `#${t.id}${label} [${t.status}] ${t.schedule_type}(${t.schedule_value}) next: ${t.next_run ?? "—"}`;
+  });
+
+  if (sendMessage) await sendMessage(req.chatId, `Scheduled tasks:\n${lines.join("\n")}`);
 }
 
 /** Move a failed request file to the errors directory with error info */

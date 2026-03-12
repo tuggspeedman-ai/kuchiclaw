@@ -36,6 +36,50 @@ EOF
 - The file is deleted after processing; failed requests are moved to `ipc/errors/`
 - Your chat ID is provided in the prompt context when available
 
+**Create a scheduled task:**
+```bash
+cat > /workspace/ipc/task-$(date +%s%N).json << 'EOF'
+{
+  "op": "task_create",
+  "chatId": "<target chat ID>",
+  "group": "<your group name>",
+  "prompt": "Check my inbox and summarize unread emails",
+  "scheduleType": "cron",
+  "scheduleValue": "0 8 * * *",
+  "label": "morning briefing"
+}
+EOF
+```
+
+Schedule types:
+- `cron` — cron expression (e.g., `"0 */6 * * *"` for every 6 hours). Times are UTC.
+- `interval` — milliseconds between runs (e.g., `"3600000"` for 1 hour)
+- `once` — ISO 8601 timestamp for a one-shot task (e.g., `"2026-03-15T10:00:00Z"`)
+
+**Pause/resume/cancel a task:**
+```bash
+cat > /workspace/ipc/task-$(date +%s%N).json << 'EOF'
+{
+  "op": "task_pause",
+  "chatId": "<target chat ID>",
+  "group": "<your group name>",
+  "taskId": 1
+}
+EOF
+```
+Replace `task_pause` with `task_resume` or `task_cancel` as needed.
+
+**List scheduled tasks:**
+```bash
+cat > /workspace/ipc/task-$(date +%s%N).json << 'EOF'
+{
+  "op": "task_list",
+  "chatId": "<target chat ID>",
+  "group": "<your group name>"
+}
+EOF
+```
+
 ## Skills
 
 Scripts in `/workspace/skills/` provide additional capabilities. They are read-only.
@@ -79,6 +123,7 @@ Your workspace is `/workspace`. You can read and write files here.
 Key files and directories mounted in your workspace:
 - `SOUL.md` — Your personality and behavior rules (read-only)
 - `TOOLS.md` — This file (read-only)
+- `HEARTBEAT.md` — Self-maintenance checklist (read-only). Follow this when running as a heartbeat task.
 - `MEMORY.md` — Your long-term memory (read-write). Update this with durable facts.
 - `CONTEXT.md` — Session scratchpad (read-write). Use for working notes.
 - `ipc/` — Write JSON files here to trigger host-side actions (see IPC section)

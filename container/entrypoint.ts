@@ -56,12 +56,14 @@ function readIfExists(path: string): string {
 function buildSystemPrompt(): string {
   const soul = readIfExists("/workspace/SOUL.md");
   const tools = readIfExists("/workspace/TOOLS.md");
+  const heartbeat = readIfExists("/workspace/HEARTBEAT.md");
   const memory = readIfExists("/workspace/MEMORY.md");
   const context = readIfExists("/workspace/CONTEXT.md");
 
   const parts: string[] = [];
   if (soul) parts.push(soul);
   if (tools) parts.push(tools);
+  if (heartbeat) parts.push(heartbeat);
   if (memory) parts.push(memory);
   if (context) parts.push(context);
 

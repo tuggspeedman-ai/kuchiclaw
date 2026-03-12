@@ -11,6 +11,7 @@ import { getSecrets } from "./auth.js";
 import { insertMessage } from "./db.js";
 import { enqueue, shutdown as shutdownQueue } from "./group-queue.js";
 import { registerSender, startPolling, stopPolling } from "./ipc.js";
+import { startScheduler, stopScheduler } from "./task-scheduler.js";
 import { SHUTDOWN_TIMEOUT_MS, MCP_SERVERS_PATH } from "./config.js";
 import type { McpServerConfig } from "./types.js";
 
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
 
   await channel.connect();
   startPolling();
+  startScheduler({ secrets, channel, mcpServers });
   console.log("[Orchestrator] KuchiClaw is running. Press Ctrl+C to stop.");
 
   // Graceful shutdown: stop accepting → stop IPC → wait for running containers → exit
@@ -79,9 +81,10 @@ async function main(): Promise<void> {
     shuttingDown = true;
     console.log("\n[Orchestrator] Shutting down...");
 
-    // Stop receiving new messages and IPC polling
+    // Stop receiving new messages, IPC polling, and scheduler
     await channel.disconnect();
     stopPolling();
+    stopScheduler();
 
     // Wait for running containers to finish, with a hard timeout
     const finished = shutdownQueue();

@@ -2,6 +2,7 @@
 // and captures ContainerOutput from stdout using sentinel markers.
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import {
   CONTAINER_IMAGE,
   CONTAINER_TIMEOUT_MS,
@@ -27,6 +28,10 @@ export async function runContainer(input: ContainerInput, paths?: GroupPaths): P
     mounts.push("-v", `${paths.ipc}:/workspace/ipc`);
     // Skills directory — CLI scripts/API wrappers (read-only)
     mounts.push("-v", `${paths.skills}:/workspace/skills:ro`);
+    // HEARTBEAT.md — self-maintenance checklist (read-only, only if file exists)
+    if (fs.existsSync(paths.heartbeat)) {
+      mounts.push("-v", `${paths.heartbeat}:/workspace/HEARTBEAT.md:ro`);
+    }
   }
 
   const args = [

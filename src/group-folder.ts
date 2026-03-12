@@ -22,6 +22,8 @@ export interface GroupPaths {
   ipc: string;
   /** Skills directory — CLI scripts mounted read-only */
   skills: string;
+  /** Global HEARTBEAT.md (read-only, self-maintenance checklist) */
+  heartbeat: string;
 }
 
 /** Ensure a group folder exists with all required files, return paths. */
@@ -36,6 +38,7 @@ export function ensureGroupFolder(groupName: string): GroupPaths {
     tools: path.join(PROJECT_ROOT, "TOOLS.md"),
     ipc: IPC_DIR,
     skills: SKILLS_DIR,
+    heartbeat: path.join(PROJECT_ROOT, "HEARTBEAT.md"),
   };
 
   // Create group directory and logs/

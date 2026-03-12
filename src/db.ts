@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 import { DATA_DIR } from "./config.js";
+import type { ScheduledTask, TaskRunLog } from "./types.js";
 
 const DB_PATH = path.join(DATA_DIR, "kuchiclaw.db");
 
@@ -19,6 +20,17 @@ export interface Message {
 
 let db: Database.Database | null = null;
 
+/** Reset the DB connection. If a new Database is provided, schema is initialized
+ *  on it. Used by tests to inject an in-memory DB without touching disk. */
+export function resetDb(override?: Database.Database): void {
+  if (db) db.close();
+  db = null;
+  if (override) {
+    db = override;
+    initSchema(db);
+  }
+}
+
 /** Get or create the database connection, initializing schema if needed. */
 export function getDb(): Database.Database {
   if (db) return db;
@@ -28,8 +40,13 @@ export function getDb(): Database.Database {
 
   // WAL mode for better concurrent read performance
   db.pragma("journal_mode = WAL");
+  initSchema(db);
 
-  db.exec(`
+  return db;
+}
+
+function initSchema(database: Database.Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_folder TEXT NOT NULL,
@@ -39,9 +56,32 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_messages_group_time
       ON messages (group_folder, timestamp DESC);
-  `);
 
-  return db;
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      schedule_type TEXT NOT NULL CHECK (schedule_type IN ('cron', 'interval', 'once')),
+      schedule_value TEXT NOT NULL,
+      next_run TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      label TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS task_run_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES scheduled_tasks(id),
+      run_at TEXT NOT NULL DEFAULT (datetime('now')),
+      duration_ms INTEGER,
+      status TEXT NOT NULL CHECK (status IN ('success', 'error')),
+      result TEXT,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_run_logs_task
+      ON task_run_logs (task_id, run_at DESC);
+  `);
 }
 
 /** Store a message (user prompt or agent response). */
@@ -76,4 +116,71 @@ export function formatHistory(messages: Message[]): string {
   });
 
   return "# Recent Conversation History\n\n" + lines.join("\n\n");
+}
+
+// --- Scheduled Tasks ---
+
+/** Insert a new scheduled task. Returns the new task ID. */
+export function insertTask(
+  groupFolder: string,
+  chatId: string,
+  prompt: string,
+  scheduleType: "cron" | "interval" | "once",
+  scheduleValue: string,
+  nextRun: string,
+  label?: string,
+): number {
+  const stmt = getDb().prepare(`
+    INSERT INTO scheduled_tasks (group_folder, chat_id, prompt, schedule_type, schedule_value, next_run, label)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(groupFolder, chatId, prompt, scheduleType, scheduleValue, nextRun, label ?? null);
+  return result.lastInsertRowid as number;
+}
+
+/** Get all active tasks whose next_run is at or before the given ISO timestamp. */
+export function getDueTasks(now: string): ScheduledTask[] {
+  const stmt = getDb().prepare(`
+    SELECT * FROM scheduled_tasks
+    WHERE status = 'active' AND next_run <= ?
+    ORDER BY next_run ASC
+  `);
+  return stmt.all(now) as ScheduledTask[];
+}
+
+/** Get all tasks for a group (any status). */
+export function getTasksByGroup(groupFolder: string): ScheduledTask[] {
+  const stmt = getDb().prepare(`
+    SELECT * FROM scheduled_tasks
+    WHERE group_folder = ?
+    ORDER BY created_at DESC
+  `);
+  return stmt.all(groupFolder) as ScheduledTask[];
+}
+
+/** Update a task's status. */
+export function updateTaskStatus(taskId: number, status: "active" | "paused" | "completed"): boolean {
+  const stmt = getDb().prepare("UPDATE scheduled_tasks SET status = ? WHERE id = ?");
+  return stmt.run(status, taskId).changes > 0;
+}
+
+/** Update a task's next_run time. */
+export function updateTaskNextRun(taskId: number, nextRun: string): void {
+  const stmt = getDb().prepare("UPDATE scheduled_tasks SET next_run = ? WHERE id = ?");
+  stmt.run(nextRun, taskId);
+}
+
+/** Log a task run. */
+export function insertTaskRunLog(
+  taskId: number,
+  durationMs: number | null,
+  status: "success" | "error",
+  result?: string,
+  error?: string,
+): void {
+  const stmt = getDb().prepare(`
+    INSERT INTO task_run_logs (task_id, duration_ms, status, result, error)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  stmt.run(taskId, durationMs, status, result ?? null, error ?? null);
 }

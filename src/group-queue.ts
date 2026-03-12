@@ -18,6 +18,10 @@ export interface Job {
   channel: Channel;
   mcpServers?: Record<string, McpServerConfig>;
   attempt: number;
+  /** Called with agent result on success (used by scheduler for run logging) */
+  onComplete?: (result: string) => void;
+  /** Called with error message on final failure (used by scheduler for run logging) */
+  onError?: (error: string) => void;
 }
 
 /** Tracks per-group queues and running counts */
@@ -98,11 +102,13 @@ async function executeJob(job: Job): Promise<void> {
       const result = output.result ?? "(no response)";
       insertMessage(group, "assistant", result);
       await channel.sendMessage(chatId, result);
+      job.onComplete?.(result);
     } else {
       // Agent-level error (not a container crash) — don't retry
       const errMsg = `Error: ${output.error ?? "unknown error"}`;
       console.error(`[Queue] Agent error: ${errMsg}`);
       await channel.sendMessage(chatId, errMsg);
+      job.onError?.(errMsg);
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -111,6 +117,7 @@ async function executeJob(job: Job): Promise<void> {
     // Don't retry auth failures
     if (isAuthError(errMsg)) {
       await channel.sendMessage(chatId, `Authentication error: ${errMsg}`);
+      job.onError?.(errMsg);
       return;
     }
 
@@ -121,6 +128,7 @@ async function executeJob(job: Job): Promise<void> {
       enqueue({ ...job, attempt: job.attempt + 1 });
     } else {
       await channel.sendMessage(chatId, `Failed after ${MAX_RETRIES} attempts: ${errMsg}`);
+      job.onError?.(errMsg);
     }
   }
 }

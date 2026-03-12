@@ -51,3 +51,6 @@ export const SKILLS_DIR = path.join(PROJECT_ROOT, "skills");
 
 /** MCP server config file */
 export const MCP_SERVERS_PATH = path.join(PROJECT_ROOT, "mcp-servers.json");
+
+/** Task scheduler polling interval (ms) */
+export const SCHEDULER_POLL_MS = 60_000;
