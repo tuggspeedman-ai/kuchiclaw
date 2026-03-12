@@ -39,7 +39,7 @@ fi
 # 5. Clone repo and install deps
 echo "[5/6] Setting up project..."
 if [ ! -d /opt/kuchiclaw/.git ]; then
-  sudo -u kuchiclaw git clone https://github.com/jonathanavni/kuchiclaw.git /opt/kuchiclaw
+  sudo -u kuchiclaw git clone https://github.com/tuggspeedman-ai/kuchiclaw.git /opt/kuchiclaw
 else
   echo "Repo already cloned."
 fi
