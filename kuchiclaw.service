@@ -21,6 +21,7 @@ TimeoutStopSec=90
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
+PrivateTmp=yes
 ReadWritePaths=/opt/kuchiclaw/data /opt/kuchiclaw/groups
 ProtectHome=yes
 
