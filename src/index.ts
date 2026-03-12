@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const secrets = getSecrets();
+  const secrets = await getSecrets();
   const mcpServers = loadMcpServers();
   const channel = new TelegramChannel(botToken);
 

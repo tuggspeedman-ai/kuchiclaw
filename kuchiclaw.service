@@ -1,0 +1,33 @@
+[Unit]
+Description=KuchiClaw AI Agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=kuchiclaw
+Group=kuchiclaw
+WorkingDirectory=/opt/kuchiclaw
+EnvironmentFile=/opt/kuchiclaw/.env
+ExecStart=/usr/bin/npx tsx src/index.ts
+Restart=always
+RestartSec=5
+
+# Graceful shutdown — SIGTERM triggers the handler in index.ts
+KillSignal=SIGTERM
+TimeoutStopSec=90
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/kuchiclaw/data /opt/kuchiclaw/groups
+ProtectHome=yes
+
+# Logging via journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kuchiclaw
+
+[Install]
+WantedBy=multi-user.target

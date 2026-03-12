@@ -15,13 +15,13 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 - Filesystem-based IPC (containers write JSON → host polls/validates/executes)
 - SQLite for persistent state (messages, sessions, groups, tasks)
 - Five living files: SOUL.md (identity, global, ro), TOOLS.md (capabilities, global, ro), MEMORY.md (durable facts, per-group, rw), CONTEXT.md (session scratchpad, per-group, rw), HEARTBEAT.md (self-maintenance checklist, global, ro)
-- Authentication via Claude Max OAuth token — read from env vars or macOS keychain, passed to containers via stdin (never mounted)
+- Authentication via Claude Max OAuth token with auto-refresh (`data/oauth.json`), fallback to `ANTHROPIC_API_KEY` env var, then macOS keychain (local dev). Tokens passed to containers via stdin (never mounted)
 - Container runs as non-root `agent` user (Claude Code refuses bypassPermissions as root)
 - Telegram as primary messaging channel
 
 ## Current State
 
-M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), and M8 (multi-group isolation) are complete.
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), and M8 (multi-group isolation) are complete. M9 (deploy to Hetzner) is in progress.
 
 Working flow (CLI): `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
 
@@ -36,7 +36,8 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), two-tier authorization (main=unrestricted, others=scoped to own chat/tasks), moves failures to `errors/`
 - `src/task-scheduler.ts` — Polls every 60s for due tasks, supports cron (via cron-parser), interval (with drift prevention), and one-shot schedules, enqueues into GroupQueue, in-flight tracking via Set
 - `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
-- `src/auth.ts` — Authentication helpers: reads Claude auth tokens from env vars or macOS keychain, collects skill secrets (FASTMAIL_API_TOKEN) from env (shared by cli.ts and index.ts)
+- `src/auth.ts` — Authentication helpers: resolves auth via OAuth auto-refresh → API key → keychain, collects skill secrets (FASTMAIL_API_TOKEN) from env (shared by cli.ts and index.ts)
+- `src/oauth-refresh.ts` — OAuth token auto-refresh for Claude Max: reads/writes `data/oauth.json`, refreshes access token on demand when within 5 min of expiry, returns null on failure (caller falls back)
 - `src/channels/registry.ts` — Channel interface definition (connect, sendMessage, isConnected, ownsJid, disconnect) + IncomingMessage type (with chatType, senderId)
 - `src/channels/telegram.ts` — Telegram adapter: long polling via node-telegram-bot-api, /start and /status commands, message chunking, typing indicator, @mention filtering for group chats, sender allowlist
 - `src/container-runner.ts` — Spawns `docker run -i --rm` with living file + IPC + skills mounts, passes ContainerInput via stdin, parses sentinel markers from stdout
@@ -56,6 +57,12 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `groups/main/CONTEXT.md` — Per-group session scratchpad (read-write)
 - `data/kuchiclaw.db` — SQLite database (auto-created on first run)
 - `data/ipc/` — IPC request directory (containers write here, host polls)
+- `data/oauth.json` — OAuth tokens for auto-refresh (accessToken, refreshToken, expiresAt; chmod 600, gitignored)
+
+**Deployment (M9):**
+- `kuchiclaw.service` — systemd unit file: runs as `kuchiclaw` user, `Restart=always`, `EnvironmentFile=/opt/kuchiclaw/.env`, security hardening (NoNewPrivileges, ProtectSystem=strict)
+- `deploy/setup.sh` — VPS provisioning script: installs Docker + Node.js 20, creates `kuchiclaw` user, clones repo, builds Docker image, installs systemd service
+- `deploy/export-oauth.sh` — Exports OAuth tokens from macOS keychain to `data/oauth.json` for transfer to VPS
 
 **Reference:**
 - `project-plan.md` — Detailed milestones and architectural decisions
@@ -85,3 +92,5 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - IPC requests validated before execution
 - No personal account credentials — dedicated service accounts only
 - `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, `MAIN_CHAT_ID` (channel-qualified, e.g., `tg-402431039`), `ALLOWED_SENDER_IDS` (comma-separated, optional).
+- `data/oauth.json` stores OAuth tokens (chmod 600, gitignored). Never mounted into containers.
+- Production: dedicated `kuchiclaw` system user owns `/opt/kuchiclaw/`, runs the systemd service, is in `docker` group. `.env` and `data/oauth.json` are chmod 600.

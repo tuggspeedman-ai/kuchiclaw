@@ -124,7 +124,14 @@ Group folder naming uses `{channel}-{chatId}` (e.g., `tg-123456789`), extensible
 
 ### Authentication
 
-Claude Max OAuth token, read from environment variables or macOS keychain. Passed to containers via stdin — never mounted as files. Skill-specific secrets (e.g., `FASTMAIL_API_TOKEN`) flow through the same stdin mechanism.
+Claude Max OAuth token with automatic refresh. Auth resolution priority:
+
+1. **`data/oauth.json`** — OAuth access token + refresh token stored locally. On each container spawn, the host checks if the access token is within 5 minutes of expiry and refreshes it via `POST https://platform.claude.com/v1/oauth/token` (standard OAuth2 refresh_token grant). The refresh token is long-lived; the response may rotate it.
+2. **`ANTHROPIC_API_KEY` env var** — fallback if OAuth refresh fails. Pay-per-use API billing. Optional.
+3. **`CLAUDE_CODE_OAUTH_TOKEN` env var** — static token override.
+4. **macOS keychain** — local dev only. Claude Code stores credentials in `Claude Code-credentials` keychain entry.
+
+Tokens are passed to containers via stdin — never mounted as files. Skill-specific secrets (e.g., `FASTMAIL_API_TOKEN`) flow through the same stdin mechanism.
 
 ---
 
@@ -206,6 +213,14 @@ Global sender allowlist via `ALLOWED_SENDER_IDS` env var.
 
 **Key files:** `src/group-mapping.ts`, `src/channels/telegram.ts`, `src/index.ts`, `src/ipc.ts`
 
+### Phase 9: Deploy to Hetzner
+
+Deployed to a Hetzner CPX22 VPS running 24/7. Added OAuth token auto-refresh (`src/oauth-refresh.ts`) so the bot can use Claude Max without manual token management — access tokens are refreshed on demand before container spawns. Fallback to `ANTHROPIC_API_KEY` if refresh fails.
+
+Created a systemd service (`kuchiclaw.service`) running as a dedicated `kuchiclaw` user with security hardening (`ProtectSystem=strict`, `NoNewPrivileges`). Provisioning automated via `deploy/setup.sh`.
+
+**Key files:** `src/oauth-refresh.ts`, `kuchiclaw.service`, `deploy/setup.sh`, `deploy/export-oauth.sh`
+
 ### Phase Sequencing Rationale
 
 1. **Phase 0 (Scaffolding)** — Docker image needed before anything else works
@@ -223,7 +238,9 @@ Global sender allowlist via `ALLOWED_SENDER_IDS` env var.
 - **IPC authorization** — every request validated before execution. Non-main groups scoped to own data
 - **Non-root container user** — Claude Code refuses `bypassPermissions` as root
 - **No personal account credentials** — dedicated service accounts only
+- **OAuth tokens protected** — `data/oauth.json` is chmod 600, gitignored, never mounted into containers
 - **Sender allowlist** — unknown Telegram users silently ignored
+- **Production hardening** — dedicated `kuchiclaw` system user, systemd `ProtectSystem=strict`, `NoNewPrivileges=yes`
 
 ---
 
@@ -242,7 +259,8 @@ kuchiclaw/
 ├── src/
 │   ├── index.ts                    # Main orchestrator entrypoint
 │   ├── cli.ts                      # CLI entrypoint (testing)
-│   ├── auth.ts                     # Auth helpers (keychain, env vars, skill secrets)
+│   ├── auth.ts                     # Auth helpers (OAuth refresh → API key → keychain)
+│   ├── oauth-refresh.ts            # OAuth token auto-refresh (reads/writes data/oauth.json)
 │   ├── container-runner.ts         # Docker container lifecycle
 │   ├── db.ts                       # SQLite schema + queries
 │   ├── group-folder.ts             # Per-group directory management
@@ -265,8 +283,13 @@ kuchiclaw/
 │       ├── MEMORY.md               # Long-lived curated facts (per-group, rw)
 │       ├── CONTEXT.md              # Session working memory (per-group, rw)
 │       └── logs/
+├── deploy/
+│   ├── setup.sh                    # VPS provisioning script
+│   └── export-oauth.sh             # Export OAuth tokens from macOS keychain
+├── kuchiclaw.service               # systemd unit file
 └── data/
     ├── kuchiclaw.db                # SQLite database
+    ├── oauth.json                  # OAuth tokens (chmod 600, gitignored)
     └── ipc/                        # IPC request directory
 ```
 
@@ -303,51 +326,48 @@ TypeScript, tsx, and Docker are dev/build tools.
 
 ## Deployment
 
-Deployment can happen anytime after Telegram works. Feature milestones can be developed locally and deployed incrementally.
+### Platform: Hetzner Cloud VPS
 
-**Requirements:**
-- Docker runtime on the host (orchestrator spawns ephemeral containers — needs a bare VPS, not a managed container platform)
-- Persistent storage for SQLite, group folders, and living files
-- Outbound HTTPS for Claude API, Telegram API, and FastMail JMAP
-- No inbound ports needed (Telegram long polling)
+KuchiClaw's architecture (host process spawning ephemeral Docker containers) eliminates most PaaS options. Six platforms were evaluated — Railway and Fly.io can't do nested containers, AWS Lightsail's burstable CPU throttles on container spawns, Contabo oversells CPU, Hostinger has renewal traps.
 
-### Platform Decision: Hetzner Cloud VPS
-
-KuchiClaw's architecture (host process spawning ephemeral Docker containers) eliminates most PaaS options. Six platforms were evaluated:
-
-| Option | Verdict | Why |
-|--------|---------|-----|
-| **Hetzner Cloud** | **Selected** | Best price-performance, dedicated CPU from ~€5/mo, hourly billing, 20 TB bandwidth, full API/CLI/Terraform, active OpenClaw deployment community (31+ GitHub repos) |
-| **Contabo** | Rejected | CPU overselling well-documented (20-40% steal), sustained load triggers throttling. Dedicated CPU starts at ~$46/mo vs Hetzner's ~€5/mo. Weak backups ($7.34/mo add-on). No block storage |
-| **AWS Lightsail** | Rejected | Burstable CPU — $5-24/mo plans throttle when burst credits deplete. Container spawning burns credits fast. Unlimited burst starts at $44/mo |
-| **Hostinger** | Rejected | Promo pricing (~$6/mo) doubles on renewal (~$15/mo). 12-24 month commitment required. Single-snapshot backups (overwrites previous) |
-| **Railway** | Rejected | No Docker-in-Docker — loses OS-level container isolation |
-| **Fly.io** | Rejected | Persistent volume quirks, nested container spawning not straightforward |
-
-**Recommended plan: Hetzner CX22** (~€4.30/mo including IPv4) — 2 shared vCPU, 4 GB RAM, 40 GB NVMe SSD, 20 TB bandwidth. Upgrade path to CX32 (4 vCPU, 8 GB RAM, ~€6.80/mo) if RAM is tight with concurrent containers.
+**Hetzner CPX22** ($6.99/mo + $1.40 backups + $0.50 IPv4 = $8.89/mo) — 2 shared vCPU (AMD), 4 GB RAM, 80 GB NVMe SSD, 20 TB bandwidth, Nuremberg datacenter, Ubuntu 24.04. Upgrade path to CPX32 (4 vCPU, 8 GB RAM) if RAM is tight.
 
 ```
-Hetzner CX22 (Nuremberg or Falkenstein)
+Hetzner CPX22 (Nuremberg)
 ├── systemd service: kuchiclaw (Restart=always)
-│   ├── polls Telegram (long-polling, no inbound ports needed)
+│   ├── runs as dedicated 'kuchiclaw' user
+│   ├── polls Telegram (long-polling, no inbound ports)
 │   ├── spawns Docker containers per agent invocation
-│   └── polls data/ipc/ for container requests
+│   ├── polls data/ipc/ for container requests
+│   └── auto-refreshes OAuth token on demand
 ├── /opt/kuchiclaw/
+│   ├── .env (chmod 600) — TELEGRAM_BOT_TOKEN, FASTMAIL_API_TOKEN, etc.
+│   ├── data/oauth.json (chmod 600) — OAuth access + refresh tokens
 │   ├── data/kuchiclaw.db (SQLite, WAL mode)
 │   ├── data/ipc/
-│   ├── groups/*/MEMORY.md, CONTEXT.md
-│   └── .env (chmod 600)
+│   └── groups/*/MEMORY.md, CONTEXT.md
 └── Docker daemon (containers spawned on demand)
 ```
 
 **Secrets management:**
 - Dev (macOS): auto-read from keychain, zero config
-- Production: `.env` file (chmod 600) with systemd `EnvironmentFile`
+- Production: `.env` file (chmod 600) with systemd `EnvironmentFile`, `data/oauth.json` (chmod 600) for OAuth tokens
 - Secrets are never mounted into containers — always passed via stdin
 
+**Provisioning:** `deploy/setup.sh` installs Docker + Node.js 20, creates the `kuchiclaw` user (in `docker` group), clones the repo, builds the Docker image, and installs the systemd service. OAuth tokens are exported from the dev machine's keychain via `deploy/export-oauth.sh` and transferred via SCP.
+
+**Update procedure:**
+```bash
+cd /opt/kuchiclaw
+git pull
+npm install                        # if deps changed
+docker build -t kuchiclaw-agent .  # if Dockerfile/container/ changed
+sudo systemctl restart kuchiclaw
+```
+
 **Backup strategy:**
-- Hetzner auto-backups (~€0.86/mo, keeps 7 daily copies)
-- Living file backup via Git for versioned memory history
+- Hetzner auto-backups ($1.40/mo, keeps 7 daily copies)
+- Living file backup via Git for versioned memory history (future milestone)
 - SQLite `.backup` to off-site storage as future enhancement
 
 ---
@@ -366,9 +386,9 @@ Deferred ideas worth revisiting once the core system is stable:
 - **Apple Container support** — native macOS containers for lower overhead on dev machines.
 - **WhatsApp channel** — second messaging adapter using the Channel interface.
 - **Email channel adapter** — email as an input channel (poll FastMail inbox via JMAP → route to agent → reply). Different from the FastMail skill (which lets the agent proactively send email).
-- **Crash recovery** — on startup, detect orphaned messages and re-enqueue them.
+- **Crash recovery** — on startup, detect orphaned messages and re-enqueue them (M10).
+- **Living file backup via Git** — periodic git commit + push of living files to a private repo for versioned history (M11).
 - **Global container cap** — `MAX_CONCURRENT_CONTAINERS` across all groups, in addition to the per-group cap.
-- **Living file backup via Git** — periodic git commit + push of living files and SQLite to a private repo for versioned history.
 
 ---
 

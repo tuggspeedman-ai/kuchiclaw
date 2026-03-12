@@ -69,7 +69,7 @@ async function main() {
     process.exit(1);
   }
 
-  const secrets = getSecrets();
+  const secrets = await getSecrets();
   const paths = ensureGroupFolder(group);
 
   // Load recent history from SQLite for conversational context
