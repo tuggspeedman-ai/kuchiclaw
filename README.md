@@ -94,7 +94,7 @@ ALLOWED_SENDER_IDS=123456789        # Comma-separated Telegram user IDs (empty =
 }
 ```
 
-On macOS, `deploy/export-oauth.sh` extracts tokens from the keychain automatically. The orchestrator refreshes the access token before it expires.
+On macOS, `deploy/export-oauth.sh` extracts tokens from the keychain automatically. Tokens are refreshed at the start of each container run and persisted back to `oauth.json` — no manual rotation needed.
 
 **Option B: API key** — set `ANTHROPIC_API_KEY` in `.env`. Pay-per-use billing. Automatically uses Sonnet 4.6 instead of Opus 4.6 to reduce costs.
 
@@ -188,7 +188,7 @@ A few decisions that might be interesting if you're building something similar:
 - **Living files over vector databases.** Agent memory is markdown files the agent reads and writes directly. Simple, auditable, version-controllable. Scales to thousands of facts before you'd need anything fancier.
 - **Per-group isolation.** Each Telegram chat gets its own memory, context, and IPC authorization scope. The main chat has admin access; others are sandboxed.
 - **Crash recovery.** Messages track processing status in SQLite. On restart, orphaned messages are detected and re-enqueued automatically.
-- **OAuth auto-refresh.** The bot uses a Claude Max subscription without manual token management. Access tokens refresh on demand before container spawns.
+- **OAuth auto-refresh.** The bot uses a Claude Max subscription without manual token management. Tokens refresh at the start of each container run and are persisted back to the host.
 
 ## Prior art
 
