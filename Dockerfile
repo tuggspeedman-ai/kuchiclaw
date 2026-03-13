@@ -19,7 +19,7 @@ RUN npm install tsx
 COPY container/entrypoint.ts ./
 
 # Create non-root user (Claude Code refuses bypassPermissions as root)
-RUN useradd -m -s /bin/bash agent
+RUN useradd -m -s /bin/bash -u 999 agent
 
 # Create workspace directory owned by agent
 RUN mkdir -p /workspace && chown agent:agent /workspace
