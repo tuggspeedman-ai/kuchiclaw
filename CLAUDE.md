@@ -32,7 +32,7 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 **Implemented (M0-M8):**
 - `src/index.ts` — Main orchestrator entrypoint: connects Telegram channel, starts IPC polling + task scheduler, loads MCP config, routes messages through per-group queue via chatIdToGroup, graceful shutdown on SIGINT/SIGTERM
 - `src/group-queue.ts` — Per-group FIFO queue with per-group concurrency cap, exponential backoff retry, auth-failure detection, onComplete/onError callbacks for task logging
-- `src/group-mapping.ts` — Maps channel chat IDs to group folder names (`chatIdToGroup`, `groupToChatId`). MAIN_CHAT_ID is channel-qualified (e.g., `tg-402431039`)
+- `src/group-mapping.ts` — Maps channel chat IDs to group folder names (`chatIdToGroup`, `groupToChatId`). MAIN_CHAT_ID is channel-qualified (e.g., `tg-<your-chat-id>`)
 - `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), two-tier authorization (main=unrestricted, others=scoped to own chat/tasks), moves failures to `errors/`
 - `src/task-scheduler.ts` — Polls every 60s for due tasks, supports cron (via cron-parser), interval (with drift prevention), and one-shot schedules, enqueues into GroupQueue, in-flight tracking via Set
 - `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
@@ -92,7 +92,7 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - Secrets passed via stdin, never mounted as files
 - IPC requests validated before execution
 - No personal account credentials — dedicated service accounts only
-- `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, `MAIN_CHAT_ID` (channel-qualified, e.g., `tg-402431039`), `ALLOWED_SENDER_IDS` (comma-separated, optional).
+- `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, `MAIN_CHAT_ID` (channel-qualified, e.g., `tg-<your-chat-id>`), `ALLOWED_SENDER_IDS` (comma-separated, optional).
 - `data/oauth.json` stores OAuth tokens (chmod 600, gitignored). Never mounted into containers.
 - Production: dedicated `kuchiclaw` system user owns `/opt/kuchiclaw/`, runs the systemd service, is in `docker` group. `.env` and `data/oauth.json` are chmod 600.
 - `groups/` is gitignored in the main repo — agent memory is backed up to a separate private `kuchiclaw-memory` repo via `skills/backup.sh` on a systemd timer. This prevents `git pull` deployments from overwriting the agent's evolved memory.
