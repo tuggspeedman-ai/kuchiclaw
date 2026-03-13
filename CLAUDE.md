@@ -31,7 +31,7 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 
 **Implemented (M0-M8):**
 - `src/index.ts` — Main orchestrator entrypoint: connects Telegram channel, starts IPC polling + task scheduler, loads MCP config, routes messages through per-group queue via chatIdToGroup, graceful shutdown on SIGINT/SIGTERM
-- `src/group-queue.ts` — Per-group FIFO queue with per-group concurrency cap, exponential backoff retry, auth-failure detection, onComplete/onError callbacks for task logging
+- `src/group-queue.ts` — Per-group FIFO queue with per-group concurrency cap, exponential backoff retry, auth-failure detection, onComplete/onError callbacks for task logging. Calls `getSecrets()` per job (not at startup) so OAuth tokens stay fresh — access tokens expire after 8h and the process is long-lived
 - `src/group-mapping.ts` — Maps channel chat IDs to group folder names (`chatIdToGroup`, `groupToChatId`). MAIN_CHAT_ID is channel-qualified (e.g., `tg-<your-chat-id>`)
 - `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), two-tier authorization (main=unrestricted, others=scoped to own chat/tasks), moves failures to `errors/`
 - `src/task-scheduler.ts` — Polls every 60s for due tasks, supports cron (via cron-parser), interval (with drift prevention), and one-shot schedules, enqueues into GroupQueue, in-flight tracking via Set
