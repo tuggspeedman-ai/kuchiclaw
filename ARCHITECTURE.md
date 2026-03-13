@@ -126,8 +126,8 @@ Group folder naming uses `{channel}-{chatId}` (e.g., `tg-123456789`), extensible
 
 Claude Max OAuth token with automatic refresh. Auth resolution priority:
 
-1. **`data/oauth.json`** — OAuth access token + refresh token stored locally. On each container spawn, the host checks if the access token is within 5 minutes of expiry and refreshes it via `POST https://platform.claude.com/v1/oauth/token` (standard OAuth2 refresh_token grant). The refresh token is long-lived; the response may rotate it.
-2. **`ANTHROPIC_API_KEY` env var** — fallback if OAuth refresh fails. Pay-per-use API billing. Automatically switches to Sonnet 4.6 (instead of Opus 4.6) to reduce costs. Optional.
+1. **`data/oauth.json`** — OAuth access token + refresh token stored locally. Both are passed to containers via `ContainerInput`. The container refreshes the token at the start of each run via `POST https://platform.claude.com/v1/oauth/token` (standard OAuth2 refresh_token grant) and returns fresh tokens in `ContainerOutput.newTokens`. The host persists these back to `data/oauth.json`. Refresh happens inside containers rather than on the host because the VPS host is blocked by Cloudflare from `platform.claude.com`; containers have unrestricted network access. If a parallel container already consumed the refresh token, the container falls back to the original access token.
+2. **`ANTHROPIC_API_KEY` env var** — fallback if no `oauth.json` exists. Pay-per-use API billing. Automatically switches to Sonnet 4.6 (instead of Opus 4.6) to reduce costs. Optional.
 3. **`CLAUDE_CODE_OAUTH_TOKEN` env var** — static token override.
 4. **macOS keychain** — local dev only. Claude Code stores credentials in `Claude Code-credentials` keychain entry.
 
@@ -215,7 +215,7 @@ Global sender allowlist via `ALLOWED_SENDER_IDS` env var.
 
 ### Phase 9: Deploy to Hetzner
 
-Deployed to a Hetzner CPX22 VPS running 24/7. Added OAuth token auto-refresh (`src/oauth-refresh.ts`) so the bot can use Claude Max without manual token management — access tokens are refreshed on demand before container spawns. Fallback to `ANTHROPIC_API_KEY` if refresh fails.
+Deployed to a Hetzner CPX22 VPS running 24/7. Added OAuth token auto-refresh so the bot can use Claude Max without manual token management. Refresh happens inside containers (`container/entrypoint.ts`) rather than on the VPS host — the host is Cloudflare-blocked from `platform.claude.com`, but containers have unrestricted network access. Containers return fresh tokens in their output; the host persists them to `data/oauth.json` for the next run. Fallback to `ANTHROPIC_API_KEY` if no `oauth.json` exists.
 
 Created a systemd service (`kuchiclaw.service`) running as a dedicated `kuchiclaw` user with security hardening (`ProtectSystem=strict`, `NoNewPrivileges`). Provisioning automated via `deploy/setup.sh`.
 
@@ -387,7 +387,7 @@ Hetzner CPX22 (Nuremberg)
 │   ├── polls Telegram (long-polling, no inbound ports)
 │   ├── spawns Docker containers per agent invocation
 │   ├── polls data/ipc/ for container requests
-│   └── auto-refreshes OAuth token on demand
+│   └── containers refresh OAuth token and return new tokens to host
 ├── /opt/kuchiclaw/
 │   ├── .env (chmod 600) — TELEGRAM_BOT_TOKEN, FASTMAIL_API_TOKEN, etc.
 │   ├── data/oauth.json (chmod 600) — OAuth access + refresh tokens
