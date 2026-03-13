@@ -1,12 +1,16 @@
 # KuchiClaw
 
-Minimal AI agent framework with Docker container isolation. Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw).
+A minimal AI agent framework with Docker container isolation, built from scratch in TypeScript.
 
 ("Kuchi" — a nickname meaning "tiny one." This is the tiny claw.)
 
-## What is this?
+## Why does this exist?
 
-KuchiClaw is a single Node.js process that orchestrates AI agent sessions inside ephemeral Docker containers. Each user message triggers a fresh container with the Claude Agent SDK, isolated filesystem mounts, and injected conversation history. The agent runs, responds, and the container is destroyed.
+I built KuchiClaw to learn the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) hands-on, to understand [OpenClaw](https://openclaw.ai/)'s architecture by building a simpler version of it, and to end up with something I'm actually going to use for personal automation. It's inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) (~3,900 lines), a lightweight alternative to OpenClaw (434K lines). KuchiClaw takes the same core architecture — ephemeral containers, living files, filesystem IPC — and builds the smallest version that works in production.
+
+Today it's a production-ready, self-healing agent running 24/7 with durable backups. It's also not a framework you install — it's a reference implementation you clone, read, modify, and make your own. The architecture is intentionally simple enough that you can add new skills, swap out the messaging channel, or change the memory system without fighting abstractions.
+
+## How it works
 
 ```
 Telegram ──> Orchestrator ──> Per-Group Queue ──> Container Runner ──> Docker
@@ -23,31 +27,30 @@ Telegram ──> Orchestrator ──> Per-Group Queue ──> Container Runner �
    +--------------+                               +-------------+
 ```
 
-**Key ideas:**
-- Each session runs in an ephemeral Docker container — no long-lived agent processes
-- Containers can only see explicitly mounted directories (security boundary)
-- Persistent memory via living files: SOUL.md and TOOLS.md (global, read-only) + MEMORY.md and CONTEXT.md (per-group, read-write)
-- Filesystem-based IPC for container-to-host communication
-- SQLite for message history and scheduled tasks
-- Telegram as the primary interface (no web UI)
+Each user message triggers a fresh Docker container. The container gets the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk), read-only personality/tool files, read-write memory files, and recent conversation history. The agent runs, responds, and the container is destroyed.
 
-For the full architecture deep-dive, see [ARCHITECTURE.md](ARCHITECTURE.md).
+**Containers are the security boundary.** The agent can only see what's explicitly mounted. Secrets are passed via stdin — never written to disk. IPC requests are validated and authorized before execution.
 
-## Repository Structure
+**Memory persists across sessions** through four living files:
 
-This repo contains the **code and configuration**. The agent's living memory files (`groups/*/MEMORY.md`, `groups/*/CONTEXT.md`) are **not tracked here** — they are created at runtime and backed up to a separate private repo. This separation prevents code deployments from overwriting the agent's evolved memory.
+| File | Scope | Access | Purpose |
+|------|-------|--------|---------|
+| SOUL.md | Global | Read-only | Personality, behavior rules |
+| TOOLS.md | Global | Read-only | Available tools and usage docs |
+| MEMORY.md | Per-group | Read-write | Long-lived curated facts |
+| CONTEXT.md | Per-group | Read-write | Session working memory |
 
-```
-kuchiclaw/              (this repo — public, code + config)
-  groups/example/       Example living files for reference (tracked)
-  groups/main/          Created at runtime (gitignored)
+For the full architecture deep-dive — design decisions, tradeoffs, and implementation phases — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-kuchiclaw-memory/       (separate repo — private, agent memory)
-  groups/main/          Backed up daily from the VPS
-  kuchiclaw-backup.db   SQLite snapshot
-```
+## Clone it and make it yours
 
-## Setup
+KuchiClaw is designed to be forked and customized. The codebase is ~2,000 lines across 15 source files. Here's what you can change:
+
+- **Add skills** — drop a script in `skills/`, document it in TOOLS.md. The agent shells out to run it. Or add MCP servers via `mcp-servers.json`.
+- **Change the personality** — edit [SOUL.md](SOUL.md). This is the agent's system prompt identity.
+- **Add messaging channels** — implement the 5-method `Channel` interface in `src/channels/`. Telegram is included; WhatsApp, Discord, Slack, or email could follow the same pattern.
+- **Extend the memory system** — the living file pattern is deliberately simple. Add new files, change the compaction strategy, or wire in vector search.
+- **Add scheduled behaviors** — tasks are database rows (cron, interval, or one-shot). Create them via IPC or direct DB insert. The heartbeat system uses this for self-maintenance.
 
 ### Prerequisites
 
@@ -56,7 +59,7 @@ kuchiclaw-memory/       (separate repo — private, agent memory)
 - A [Claude Max](https://claude.ai) subscription (for OAuth) or an [Anthropic API key](https://console.anthropic.com/)
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
-### 1. Clone and install
+### Quick start
 
 ```bash
 git clone https://github.com/jonathanavni/kuchiclaw.git
@@ -66,26 +69,22 @@ npm run build
 docker compose build
 ```
 
-### 2. Configure secrets
-
-Create a `.env` file at the project root:
+Create a `.env` file:
 
 ```bash
 # Required
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-MAIN_CHAT_ID=tg-your-chat-id          # Your Telegram chat ID (send /start to the bot to find it)
+MAIN_CHAT_ID=tg-your-chat-id       # Send /start to the bot, it will echo your chat ID
 
 # Optional
-ANTHROPIC_API_KEY=sk-ant-...           # Fallback if OAuth isn't set up (auto-downgrades to Sonnet)
-FASTMAIL_API_TOKEN=...                 # For the email skill
-ALLOWED_SENDER_IDS=123456789           # Comma-separated Telegram user IDs (empty = allow all)
+ANTHROPIC_API_KEY=sk-ant-...        # Fallback if OAuth isn't set up (auto-downgrades to Sonnet)
+FASTMAIL_API_TOKEN=...              # For the email skill
+ALLOWED_SENDER_IDS=123456789        # Comma-separated Telegram user IDs (empty = allow all)
 ```
 
-### 3. Authentication
+### Authentication
 
-KuchiClaw supports two auth methods:
-
-**Option A: Claude Max OAuth (recommended)** — Uses your Claude Max subscription. Set up OAuth tokens in `data/oauth.json`:
+**Option A: Claude Max OAuth (recommended)** — uses your existing Claude Max subscription. Export tokens to `data/oauth.json`:
 
 ```json
 {
@@ -95,11 +94,11 @@ KuchiClaw supports two auth methods:
 }
 ```
 
-The orchestrator auto-refreshes the access token before it expires. On macOS, you can export tokens from the keychain using `deploy/export-oauth.sh`.
+On macOS, `deploy/export-oauth.sh` extracts tokens from the keychain automatically. The orchestrator refreshes the access token before it expires.
 
-**Option B: API key** — Set `ANTHROPIC_API_KEY` in `.env`. This is pay-per-use and automatically uses Sonnet 4.6 (instead of Opus 4.6) to reduce costs.
+**Option B: API key** — set `ANTHROPIC_API_KEY` in `.env`. Pay-per-use billing. Automatically uses Sonnet 4.6 instead of Opus 4.6 to reduce costs.
 
-### 4. Run
+### Run
 
 **Telegram bot (primary):**
 
@@ -115,19 +114,53 @@ npx tsx src/cli.ts --group mygroup "Remember that I like coffee"
 npx tsx src/cli.ts --history
 ```
 
-### 5. Customize the agent
+## Adding skills
 
-- **[SOUL.md](SOUL.md)** — Edit the agent's personality and behavior rules
-- **[TOOLS.md](TOOLS.md)** — Document available tools and skills
-- **[HEARTBEAT.md](HEARTBEAT.md)** — Configure scheduled self-maintenance tasks
-- **[groups/example/](groups/example/)** — See example MEMORY.md and CONTEXT.md formats
+Skills extend what the agent can do. Two tiers:
 
-### 6. Deploy to a VPS (optional)
+### Simple skills (recommended)
 
-See [ARCHITECTURE.md — Deployment](ARCHITECTURE.md#deployment) for full details. Quick version:
+Drop a script in `skills/`, document it in [TOOLS.md](TOOLS.md). The agent reads the docs and shells out.
 
 ```bash
-# On your VPS (Ubuntu 24.04)
+# skills/weather.sh
+#!/bin/bash
+curl -s "https://wttr.in/$1?format=3"
+```
+
+Then add usage docs to TOOLS.md so the agent knows how to call it. That's it — no registration, no protocol, no framework code.
+
+### MCP skills
+
+For tools that benefit from structured schemas, add an entry to `mcp-servers.json`. The Claude Agent SDK auto-discovers tools from MCP servers.
+
+## Repository structure
+
+This repo contains **code and configuration only**. The agent's living memory files (`groups/*/MEMORY.md`, `groups/*/CONTEXT.md`) are created at runtime and backed up to a separate private repo. This separation prevents code deployments (`git pull`) from overwriting the agent's evolved memory.
+
+```
+kuchiclaw/                (this repo — public, code + config)
+  SOUL.md                 Agent personality (edit this to change who the agent is)
+  TOOLS.md                Tool documentation (edit this when adding skills)
+  HEARTBEAT.md            Self-maintenance checklist
+  src/                    ~2,000 lines across 15 files
+  container/              Runs inside Docker (Claude Agent SDK)
+  skills/                 CLI scripts mounted into containers
+  groups/example/         Example living files for reference
+  deploy/                 VPS provisioning, systemd units, backup timer
+
+kuchiclaw-memory/         (separate repo — private, agent memory)
+  groups/*/MEMORY.md      Backed up daily from the VPS
+  groups/*/CONTEXT.md
+  kuchiclaw-backup.db     SQLite snapshot
+```
+
+## Deployment
+
+KuchiClaw runs on a VPS as a systemd service. See [ARCHITECTURE.md — Deployment](ARCHITECTURE.md#deployment) for full details including platform evaluation, security hardening, and backup strategy.
+
+```bash
+# Provision a VPS (Ubuntu 24.04)
 bash deploy/setup.sh
 
 # Transfer secrets
@@ -136,36 +169,32 @@ scp data/oauth.json root@your-server:/opt/kuchiclaw/data/oauth.json
 
 # Start
 systemctl start kuchiclaw
-journalctl -u kuchiclaw -f
 ```
 
-### 7. Set up backups (optional)
-
-Living files and the SQLite database are backed up daily to a private GitHub repo via a systemd timer. This requires:
-
-1. A private GitHub repo (e.g., `kuchiclaw-memory`)
-2. A private GitHub App with `contents: write` permission, installed on that repo
-3. The app's private key stored on the VPS at `data/github-app/`
-
-See `skills/backup.sh` and `deploy/kuchiclaw-backup.timer` for implementation details.
-
-## Adding Skills
-
-**Simple skills** (recommended): Drop a script in `skills/`, document it in TOOLS.md. The agent shells out to run it.
-
-```bash
-# Example: skills/weather.sh
-#!/bin/bash
-curl -s "https://wttr.in/$1?format=3"
-```
-
-**MCP skills**: Add an entry to `mcp-servers.json`. The SDK auto-discovers tools.
+Daily backups of living files and the SQLite database are pushed to a private GitHub repo via a systemd timer and a scoped GitHub App (short-lived tokens, `contents: write` on one repo). See `skills/backup.sh` for the implementation.
 
 ## Tests
 
 ```bash
 npm test
 ```
+
+## Architecture highlights
+
+A few decisions that might be interesting if you're building something similar:
+
+- **No microservices.** Single Node.js process orchestrates everything. Docker containers are ephemeral workers, not services.
+- **Filesystem IPC over HTTP.** Containers write JSON files to a mounted directory. The host polls, validates, executes. No sockets, no HTTP servers inside containers, no port management.
+- **Living files over vector databases.** Agent memory is markdown files the agent reads and writes directly. Simple, auditable, version-controllable. Scales to thousands of facts before you'd need anything fancier.
+- **Per-group isolation.** Each Telegram chat gets its own memory, context, and IPC authorization scope. The main chat has admin access; others are sandboxed.
+- **Crash recovery.** Messages track processing status in SQLite. On restart, orphaned messages are detected and re-enqueued automatically.
+- **OAuth auto-refresh.** The bot uses a Claude Max subscription without manual token management. Access tokens refresh on demand before container spawns.
+
+## Prior art
+
+- [NanoClaw](https://github.com/qwibitai/nanoclaw) — the primary reference (~3,900 lines, 15 files)
+- [OpenClaw](https://openclaw.ai/) — the full-scale system NanoClaw simplifies (434K lines)
+- [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) — the agent runtime inside containers
 
 ## License
 

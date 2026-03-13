@@ -406,7 +406,7 @@ Hetzner CPX22 (Nuremberg)
 
 **Update procedure:**
 ```bash
-ssh root@46.225.100.26
+ssh root@your-server
 cd /opt/kuchiclaw
 sudo -u kuchiclaw git pull
 sudo -u kuchiclaw npm install                        # if deps changed
@@ -419,7 +419,7 @@ journalctl -u kuchiclaw -f                           # verify
 ```bash
 journalctl -u kuchiclaw -f              # live logs
 systemctl status kuchiclaw              # service status
-ssh root@46.225.100.26 'docker ps'      # running containers
+ssh root@your-server 'docker ps'      # running containers
 ```
 
 **Backup strategy:**
