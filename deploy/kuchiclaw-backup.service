@@ -1,0 +1,17 @@
+[Unit]
+Description=KuchiClaw living file backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kuchiclaw
+Group=kuchiclaw
+WorkingDirectory=/opt/kuchiclaw
+ExecStart=/opt/kuchiclaw/skills/backup.sh
+
+# Security hardening (same as main service)
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+ReadWritePaths=/opt/kuchiclaw/data

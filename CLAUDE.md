@@ -21,7 +21,7 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 
 ## Current State
 
-M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), M8 (multi-group isolation), M9 (deploy to Hetzner), and M10 (crash recovery) are complete. M11 (living file backup via git) is in progress.
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), M8 (multi-group isolation), M9 (deploy to Hetzner), M10 (crash recovery), and M11 (living file backup via git) are complete. **M9 + M10 + M11 = MVP.**
 
 Working flow (CLI): `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
 
