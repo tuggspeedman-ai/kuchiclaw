@@ -94,7 +94,16 @@ export class TelegramChannel implements Channel {
     // Chunk long messages to stay within Telegram's limit
     const chunks = splitMessage(text, TELEGRAM_MAX_LENGTH);
     for (const chunk of chunks) {
-      await this.bot.sendMessage(Number(chatId), chunk);
+      const numericId = Number(chatId);
+      try {
+        // Try MarkdownV2 first for rich formatting
+        await this.bot.sendMessage(numericId, escapeMarkdownV2(chunk), {
+          parse_mode: "MarkdownV2",
+        });
+      } catch {
+        // Fall back to plain text if MarkdownV2 parsing fails
+        await this.bot.sendMessage(numericId, chunk);
+      }
     }
   }
 
@@ -120,6 +129,18 @@ export class TelegramChannel implements Channel {
       console.log("[Telegram] Disconnected");
     }
   }
+}
+
+/**
+ * Escape text for Telegram MarkdownV2.
+ * Preserves bold (**), italic (_), code (`), and links []() —
+ * escapes all other special chars that MarkdownV2 requires.
+ */
+function escapeMarkdownV2(text: string): string {
+  // Characters that must be escaped in MarkdownV2 (outside of formatting)
+  // We preserve: * _ ` [ ] ( ) for intentional formatting
+  // Escape: . ! - # + = | { } > ~
+  return text.replace(/([.!\-#+=|{}>"~\\])/g, "\\$1");
 }
 
 /** Split text into chunks that fit within maxLen, breaking at newlines when possible */
