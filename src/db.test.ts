@@ -3,6 +3,10 @@ import Database from "better-sqlite3";
 import {
   resetDb,
   getDb,
+  insertMessage,
+  getRecentMessages,
+  updateMessageStatus,
+  getOrphanedMessages,
   insertTask,
   getDueTasks,
   getTasksByGroup,
@@ -90,5 +94,122 @@ describe("task_run_logs", () => {
     expect(logs).toHaveLength(1);
     expect(logs[0].status).toBe("error");
     expect(logs[0].error).toBe("container crashed");
+  });
+});
+
+// --- M10: Crash Recovery ---
+
+describe("message processing_status", () => {
+  it("insertMessage sets pending for user, done for assistant", () => {
+    const userId = insertMessage("main", "user", "hello");
+    insertMessage("main", "assistant", "hi back");
+
+    const msgs = getRecentMessages("main");
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].processing_status).toBe("pending");
+    expect(msgs[1].processing_status).toBe("done");
+  });
+
+  it("insertMessage returns row ID", () => {
+    const id1 = insertMessage("main", "user", "first");
+    const id2 = insertMessage("main", "user", "second");
+    expect(id1).toBe(1);
+    expect(id2).toBe(2);
+  });
+
+  it("insertMessage stores chat_id and sender_name", () => {
+    insertMessage("main", "user", "hello", { chatId: "123", senderName: "Alice" });
+
+    const msgs = getRecentMessages("main");
+    expect(msgs[0].chat_id).toBe("123");
+    expect(msgs[0].sender_name).toBe("Alice");
+  });
+
+  it("updateMessageStatus transitions correctly", () => {
+    const id = insertMessage("main", "user", "hello");
+
+    updateMessageStatus(id, "processing");
+    let msg = getRecentMessages("main")[0];
+    expect(msg.processing_status).toBe("processing");
+
+    updateMessageStatus(id, "done");
+    msg = getRecentMessages("main")[0];
+    expect(msg.processing_status).toBe("done");
+  });
+
+  it("updateMessageStatus can set failed", () => {
+    const id = insertMessage("main", "user", "hello");
+    updateMessageStatus(id, "failed");
+
+    const msg = getRecentMessages("main")[0];
+    expect(msg.processing_status).toBe("failed");
+  });
+});
+
+describe("getOrphanedMessages", () => {
+  it("finds pending/processing user messages within age window", () => {
+    const db = getDb();
+
+    // Insert messages with manually set timestamps to simulate age
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, chat_id, sender_name, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-30 seconds'))
+    `).run("main", "user", "orphan1", "pending", "123", "Alice");
+
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, chat_id, sender_name, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-60 seconds'))
+    `).run("main", "user", "orphan2", "processing", "123", "Bob");
+
+    const orphans = getOrphanedMessages();
+    expect(orphans).toHaveLength(2);
+    expect(orphans[0].content).toBe("orphan2"); // older first
+    expect(orphans[1].content).toBe("orphan1");
+  });
+
+  it("excludes messages newer than minAge", () => {
+    // Insert a fresh message (just now) — should be excluded by 10s min age
+    insertMessage("main", "user", "too fresh", { chatId: "123", senderName: "Alice" });
+
+    const orphans = getOrphanedMessages();
+    expect(orphans).toHaveLength(0);
+  });
+
+  it("excludes messages older than maxAge", () => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, chat_id, sender_name, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-2 hours'))
+    `).run("main", "user", "too old", "pending", "123", "Alice");
+
+    const orphans = getOrphanedMessages();
+    expect(orphans).toHaveLength(0);
+  });
+
+  it("excludes done and failed messages", () => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, timestamp)
+      VALUES (?, ?, ?, ?, datetime('now', '-30 seconds'))
+    `).run("main", "user", "already done", "done");
+
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, timestamp)
+      VALUES (?, ?, ?, ?, datetime('now', '-30 seconds'))
+    `).run("main", "user", "already failed", "failed");
+
+    const orphans = getOrphanedMessages();
+    expect(orphans).toHaveLength(0);
+  });
+
+  it("excludes assistant messages", () => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO messages (group_folder, role, content, processing_status, timestamp)
+      VALUES (?, ?, ?, ?, datetime('now', '-30 seconds'))
+    `).run("main", "assistant", "stale response", "pending");
+
+    const orphans = getOrphanedMessages();
+    expect(orphans).toHaveLength(0);
   });
 });

@@ -4,7 +4,7 @@
 
 import { runContainer } from "./container-runner.js";
 import { ensureGroupFolder } from "./group-folder.js";
-import { insertMessage, getRecentMessages, formatHistory } from "./db.js";
+import { insertMessage, getRecentMessages, formatHistory, updateMessageStatus } from "./db.js";
 import { MAX_CONTAINERS_PER_GROUP, MAX_RETRIES, BASE_RETRY_MS } from "./config.js";
 import type { ContainerInput, McpServerConfig } from "./types.js";
 import type { Channel } from "./channels/registry.js";
@@ -20,6 +20,8 @@ export interface Job {
   /** Model override (e.g., cheaper model for API key fallback) */
   model?: string;
   attempt: number;
+  /** Row ID in messages table — used for processing_status updates */
+  messageId?: number;
   /** Called with agent result on success (used by scheduler for run logging) */
   onComplete?: (result: string) => void;
   /** Called with error message on final failure (used by scheduler for run logging) */
@@ -68,6 +70,8 @@ function drain(group: string): void {
   const job = queue.shift()!;
   running.set(group, count + 1);
 
+  if (job.messageId) updateMessageStatus(job.messageId, "processing");
+
   const promise = executeJob(job).finally(() => {
     activeJobs.delete(promise);
     running.set(group, (running.get(group) ?? 1) - 1);
@@ -103,11 +107,13 @@ async function executeJob(job: Job): Promise<void> {
 
     if (output.status === "success") {
       const result = output.result ?? "(no response)";
+      if (job.messageId) updateMessageStatus(job.messageId, "done");
       insertMessage(group, "assistant", result);
       await channel.sendMessage(chatId, result);
       job.onComplete?.(result);
     } else {
       // Agent-level error (not a container crash) — don't retry
+      if (job.messageId) updateMessageStatus(job.messageId, "failed");
       const errMsg = `Error: ${output.error ?? "unknown error"}`;
       console.error(`[Queue] Agent error: ${errMsg}`);
       await channel.sendMessage(chatId, errMsg);
@@ -119,6 +125,7 @@ async function executeJob(job: Job): Promise<void> {
 
     // Don't retry auth failures
     if (isAuthError(errMsg)) {
+      if (job.messageId) updateMessageStatus(job.messageId, "failed");
       await channel.sendMessage(chatId, `Authentication error: ${errMsg}`);
       job.onError?.(errMsg);
       return;
@@ -130,6 +137,7 @@ async function executeJob(job: Job): Promise<void> {
       await sleep(delay);
       enqueue({ ...job, attempt: job.attempt + 1 });
     } else {
+      if (job.messageId) updateMessageStatus(job.messageId, "failed");
       await channel.sendMessage(chatId, `Failed after ${MAX_RETRIES} attempts: ${errMsg}`);
       job.onError?.(errMsg);
     }

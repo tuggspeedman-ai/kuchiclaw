@@ -100,7 +100,7 @@ Phased approach:
 
 ### Database
 
-SQLite via `better-sqlite3`. Synchronous API is fine for a single-process orchestrator. Tables: `messages` (conversation history), `scheduled_tasks` (cron/interval/once), `task_run_logs` (execution history).
+SQLite via `better-sqlite3`. Synchronous API is fine for a single-process orchestrator. Tables: `messages` (conversation history + processing status for crash recovery), `scheduled_tasks` (cron/interval/once), `task_run_logs` (execution history).
 
 ### Channel Abstraction
 
@@ -220,6 +220,16 @@ Deployed to a Hetzner CPX22 VPS running 24/7. Added OAuth token auto-refresh (`s
 Created a systemd service (`kuchiclaw.service`) running as a dedicated `kuchiclaw` user with security hardening (`ProtectSystem=strict`, `NoNewPrivileges`). Provisioning automated via `deploy/setup.sh`.
 
 **Key files:** `src/oauth-refresh.ts`, `kuchiclaw.service`, `deploy/setup.sh`, `deploy/export-oauth.sh`
+
+### Phase 10: Crash Recovery
+
+On restart, the orchestrator detects and re-processes messages that were lost mid-flight. The `messages` table gained three columns: `processing_status` (`pending` → `processing` → `done` / `failed`), `chat_id`, and `sender_name`. Migration is idempotent — `ALTER TABLE ADD COLUMN` wrapped in try/catch, existing rows default to `done`.
+
+Status transitions: user message stored as `pending` on receive, set to `processing` when the job is dequeued from the queue, `done` on successful container completion, `failed` on final retry exhaustion or agent error. On startup, `getOrphanedMessages()` finds user messages stuck in `pending`/`processing` that are older than 10 seconds (not a race with current startup) but younger than 1 hour (user has moved on). Orphans are re-enqueued into the GroupQueue.
+
+The `chat_id` and `sender_name` columns were added (rather than parsing them back out of message content) to support future multi-channel recovery — without them, we couldn't determine which channel to re-send to.
+
+**Key files:** `src/db.ts`, `src/group-queue.ts`, `src/index.ts`
 
 ### Phase Sequencing Rationale
 
@@ -396,7 +406,6 @@ Deferred ideas worth revisiting once the core system is stable:
 - **Apple Container support** — native macOS containers for lower overhead on dev machines.
 - **WhatsApp channel** — second messaging adapter using the Channel interface.
 - **Email channel adapter** — email as an input channel (poll FastMail inbox via JMAP → route to agent → reply). Different from the FastMail skill (which lets the agent proactively send email).
-- **Crash recovery** — on startup, detect orphaned messages and re-enqueue them (M10).
 - **Living file backup via Git** — periodic git commit + push of living files to a private repo for versioned history (M11).
 - **Global container cap** — `MAX_CONCURRENT_CONTAINERS` across all groups, in addition to the per-group cap.
 

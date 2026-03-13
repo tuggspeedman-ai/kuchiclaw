@@ -9,6 +9,8 @@ import type { ScheduledTask, TaskRunLog } from "./types.js";
 
 const DB_PATH = path.join(DATA_DIR, "kuchiclaw.db");
 
+export type ProcessingStatus = "pending" | "processing" | "done" | "failed";
+
 /** A stored message (user prompt or agent response) */
 export interface Message {
   id: number;
@@ -16,6 +18,9 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: string; // ISO 8601
+  processing_status: ProcessingStatus;
+  chat_id: string | null;
+  sender_name: string | null;
 }
 
 let db: Database.Database | null = null;
@@ -82,20 +87,57 @@ function initSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_task_run_logs_task
       ON task_run_logs (task_id, run_at DESC);
   `);
+
+  // M10 migration: crash recovery columns on messages table.
+  // ALTER TABLE throws if column already exists — catch to stay idempotent.
+  const migrations = [
+    `ALTER TABLE messages ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'done'`,
+    `ALTER TABLE messages ADD COLUMN chat_id TEXT`,
+    `ALTER TABLE messages ADD COLUMN sender_name TEXT`,
+  ];
+  for (const sql of migrations) {
+    try { database.exec(sql); } catch { /* column already exists */ }
+  }
 }
 
-/** Store a message (user prompt or agent response). */
-export function insertMessage(groupFolder: string, role: "user" | "assistant", content: string): void {
+/** Store a message. Returns the row ID for status tracking. */
+export function insertMessage(
+  groupFolder: string,
+  role: "user" | "assistant",
+  content: string,
+  opts?: { chatId?: string; senderName?: string },
+): number {
+  const status: ProcessingStatus = role === "user" ? "pending" : "done";
   const stmt = getDb().prepare(
-    "INSERT INTO messages (group_folder, role, content) VALUES (?, ?, ?)"
+    "INSERT INTO messages (group_folder, role, content, processing_status, chat_id, sender_name) VALUES (?, ?, ?, ?, ?, ?)"
   );
-  stmt.run(groupFolder, role, content);
+  const result = stmt.run(groupFolder, role, content, status, opts?.chatId ?? null, opts?.senderName ?? null);
+  return result.lastInsertRowid as number;
+}
+
+/** Update a message's processing status. */
+export function updateMessageStatus(messageId: number, status: ProcessingStatus): void {
+  const stmt = getDb().prepare("UPDATE messages SET processing_status = ? WHERE id = ?");
+  stmt.run(status, messageId);
+}
+
+/** Find orphaned user messages: pending/processing, older than minAgeSec, younger than maxAgeSec. */
+export function getOrphanedMessages(minAgeSec = 10, maxAgeSec = 3600): Message[] {
+  const stmt = getDb().prepare(`
+    SELECT * FROM messages
+    WHERE role = 'user'
+      AND processing_status IN ('pending', 'processing')
+      AND timestamp < datetime('now', '-' || ? || ' seconds')
+      AND timestamp > datetime('now', '-' || ? || ' seconds')
+    ORDER BY timestamp ASC
+  `);
+  return stmt.all(minAgeSec, maxAgeSec) as Message[];
 }
 
 /** Get the most recent N messages for a group, oldest first. */
 export function getRecentMessages(groupFolder: string, limit = 20): Message[] {
   const stmt = getDb().prepare(`
-    SELECT id, group_folder, role, content, timestamp
+    SELECT id, group_folder, role, content, timestamp, processing_status, chat_id, sender_name
     FROM messages
     WHERE group_folder = ?
     ORDER BY timestamp DESC, id DESC
