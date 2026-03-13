@@ -15,6 +15,7 @@ interface SchedulerDeps {
   secrets: Record<string, string>;
   channel: Channel;
   mcpServers?: Record<string, McpServerConfig>;
+  model?: string;
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -73,6 +74,7 @@ function poll(): void {
       secrets: deps.secrets,
       channel: deps.channel,
       mcpServers: deps.mcpServers,
+      model: deps.model,
       attempt: 1,
       // Callback fields for task tracking
       onComplete: (result) => {

@@ -24,6 +24,7 @@ interface ContainerInput {
   systemPrompt?: string;
   messageHistory?: string;
   mcpServers?: Record<string, McpServerConfig>;
+  model?: string;
 }
 
 interface ContainerOutput {
@@ -107,6 +108,7 @@ async function main() {
     cwd: "/workspace",
     systemPrompt,
     stderr: (data: string) => { sdkStderr += data; },
+    ...(input.model ? { model: input.model } : {}),
   };
 
   // Pass MCP servers to SDK if configured

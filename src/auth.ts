@@ -18,18 +18,27 @@ function readTokenFromKeychain(): string | null {
   }
 }
 
+export interface AuthResult {
+  secrets: Record<string, string>;
+  /** True when using ANTHROPIC_API_KEY (paid) instead of OAuth (free with Claude Max) */
+  isApiKeyFallback: boolean;
+}
+
 /** Resolve auth secrets. Priority: oauth.json (auto-refresh) > env vars > macOS keychain. */
-export async function getSecrets(): Promise<Record<string, string>> {
+export async function getSecrets(): Promise<AuthResult> {
   const secrets: Record<string, string> = {};
+  let isApiKeyFallback = false;
 
   // 1. Try OAuth auto-refresh (data/oauth.json)
   const oauthToken = await getOAuthToken();
   if (oauthToken) {
     secrets.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
   }
-  // 2. Env var overrides (API key takes priority if explicitly set)
+  // 2. Env var overrides (API key — paid fallback, use cheaper model)
   else if (process.env.ANTHROPIC_API_KEY) {
     secrets.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+    isApiKeyFallback = true;
+    console.warn("[Auth] OAuth unavailable, falling back to ANTHROPIC_API_KEY (Sonnet)");
   }
   // 3. Env var fallback for OAuth token
   else if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
@@ -55,5 +64,5 @@ export async function getSecrets(): Promise<Record<string, string>> {
     secrets.FASTMAIL_API_TOKEN = process.env.FASTMAIL_API_TOKEN;
   }
 
-  return secrets;
+  return { secrets, isApiKeyFallback };
 }

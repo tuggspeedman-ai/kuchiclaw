@@ -127,7 +127,7 @@ Group folder naming uses `{channel}-{chatId}` (e.g., `tg-123456789`), extensible
 Claude Max OAuth token with automatic refresh. Auth resolution priority:
 
 1. **`data/oauth.json`** — OAuth access token + refresh token stored locally. On each container spawn, the host checks if the access token is within 5 minutes of expiry and refreshes it via `POST https://platform.claude.com/v1/oauth/token` (standard OAuth2 refresh_token grant). The refresh token is long-lived; the response may rotate it.
-2. **`ANTHROPIC_API_KEY` env var** — fallback if OAuth refresh fails. Pay-per-use API billing. Optional.
+2. **`ANTHROPIC_API_KEY` env var** — fallback if OAuth refresh fails. Pay-per-use API billing. Automatically switches to Sonnet 4.6 (instead of Opus 4.6) to reduce costs. Optional.
 3. **`CLAUDE_CODE_OAUTH_TOKEN` env var** — static token override.
 4. **macOS keychain** — local dev only. Claude Code stores credentials in `Claude Code-credentials` keychain entry.
 

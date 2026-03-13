@@ -40,8 +40,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const secrets = await getSecrets();
+  const { secrets, isApiKeyFallback } = await getSecrets();
   const mcpServers = loadMcpServers();
+  // Use cheaper model when paying per-token via API key
+  const model = isApiKeyFallback ? "claude-sonnet-4-6" : undefined;
   const channel = new TelegramChannel(botToken);
 
   // Register the channel's sendMessage for IPC to use
@@ -74,13 +76,14 @@ async function main(): Promise<void> {
       secrets,
       channel,
       mcpServers,
+      model,
       attempt: 1,
     });
   });
 
   await channel.connect();
   startPolling();
-  startScheduler({ secrets, channel, mcpServers });
+  startScheduler({ secrets, channel, mcpServers, model });
   console.log("[Orchestrator] KuchiClaw is running. Press Ctrl+C to stop.");
 
   // Graceful shutdown: stop accepting → stop IPC → wait for running containers → exit

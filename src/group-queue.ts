@@ -17,6 +17,8 @@ export interface Job {
   secrets: Record<string, string>;
   channel: Channel;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Model override (e.g., cheaper model for API key fallback) */
+  model?: string;
   attempt: number;
   /** Called with agent result on success (used by scheduler for run logging) */
   onComplete?: (result: string) => void;
@@ -91,6 +93,7 @@ async function executeJob(job: Job): Promise<void> {
     secrets,
     messageHistory: messageHistory || undefined,
     mcpServers: job.mcpServers,
+    model: job.model,
   };
 
   console.log(`[Queue] Running job for ${senderName} (group: ${group}, attempt: ${job.attempt}/${MAX_RETRIES})`);

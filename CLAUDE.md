@@ -15,7 +15,7 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 - Filesystem-based IPC (containers write JSON → host polls/validates/executes)
 - SQLite for persistent state (messages, sessions, groups, tasks)
 - Five living files: SOUL.md (identity, global, ro), TOOLS.md (capabilities, global, ro), MEMORY.md (durable facts, per-group, rw), CONTEXT.md (session scratchpad, per-group, rw), HEARTBEAT.md (self-maintenance checklist, global, ro)
-- Authentication via Claude Max OAuth token with auto-refresh (`data/oauth.json`), fallback to `ANTHROPIC_API_KEY` env var, then macOS keychain (local dev). Tokens passed to containers via stdin (never mounted)
+- Authentication via Claude Max OAuth token with auto-refresh (`data/oauth.json`), fallback to `ANTHROPIC_API_KEY` env var (auto-downgrades to Sonnet 4.6 to reduce costs), then macOS keychain (local dev). Tokens passed to containers via stdin (never mounted)
 - Container runs as non-root `agent` user (Claude Code refuses bypassPermissions as root)
 - Telegram as primary messaging channel
 
@@ -36,7 +36,7 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `src/ipc.ts` — Filesystem-based IPC: polls `data/ipc/` for JSON requests from containers, validates and executes them (message, task_create/pause/resume/cancel/list), two-tier authorization (main=unrestricted, others=scoped to own chat/tasks), moves failures to `errors/`
 - `src/task-scheduler.ts` — Polls every 60s for due tasks, supports cron (via cron-parser), interval (with drift prevention), and one-shot schedules, enqueues into GroupQueue, in-flight tracking via Set
 - `src/cli.ts` — CLI entrypoint: reads prompt from args/stdin, gets auth token, supports `--group` and `--history` flags, stores messages in SQLite, injects recent history into container
-- `src/auth.ts` — Authentication helpers: resolves auth via OAuth auto-refresh → API key → keychain, collects skill secrets (FASTMAIL_API_TOKEN) from env (shared by cli.ts and index.ts)
+- `src/auth.ts` — Authentication helpers: resolves auth via OAuth auto-refresh → API key (with Sonnet downgrade) → keychain, returns `AuthResult` with secrets + `isApiKeyFallback` flag, collects skill secrets (FASTMAIL_API_TOKEN) from env (shared by cli.ts and index.ts)
 - `src/oauth-refresh.ts` — OAuth token auto-refresh for Claude Max: reads/writes `data/oauth.json`, refreshes access token on demand when within 5 min of expiry, returns null on failure (caller falls back)
 - `src/channels/registry.ts` — Channel interface definition (connect, sendMessage, isConnected, ownsJid, disconnect) + IncomingMessage type (with chatType, senderId)
 - `src/channels/telegram.ts` — Telegram adapter: long polling via node-telegram-bot-api, /start and /status commands, message chunking, MarkdownV2 rendering (with plain text fallback), typing indicator, @mention filtering for group chats, sender allowlist

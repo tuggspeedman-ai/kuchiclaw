@@ -69,7 +69,8 @@ async function main() {
     process.exit(1);
   }
 
-  const secrets = await getSecrets();
+  const { secrets, isApiKeyFallback } = await getSecrets();
+  const model = isApiKeyFallback ? "claude-sonnet-4-6" : undefined;
   const paths = ensureGroupFolder(group);
 
   // Load recent history from SQLite for conversational context
@@ -84,6 +85,7 @@ async function main() {
     groupFolder: group,
     secrets,
     messageHistory: messageHistory || undefined,
+    model,
   };
 
   console.error(`[KuchiClaw] Group: ${group} | Prompt: "${prompt.slice(0, 80)}${prompt.length > 80 ? "..." : ""}"`);

@@ -21,6 +21,8 @@ export interface ContainerInput {
   messageHistory?: string;
   /** MCP server configs to pass to the SDK */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Model override — defaults to claude-opus-4-6 if not set */
+  model?: string;
 }
 
 /** IPC request written by the container to the mounted IPC directory */
