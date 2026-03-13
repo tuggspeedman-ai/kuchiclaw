@@ -55,7 +55,8 @@ async function refreshToken(refreshToken: string): Promise<OAuthData | null> {
     });
 
     if (!res.ok) {
-      console.error(`[OAuth] Refresh failed: ${res.status} ${res.statusText}`);
+      const body = await res.text().catch(() => "(no body)");
+      console.error(`[OAuth] Refresh failed: ${res.status} ${res.statusText} — ${body}`);
       return null;
     }
 

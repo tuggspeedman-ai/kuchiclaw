@@ -4,6 +4,7 @@
 
 import { runContainer } from "./container-runner.js";
 import { ensureGroupFolder } from "./group-folder.js";
+import { getSecrets } from "./auth.js";
 import { insertMessage, getRecentMessages, formatHistory, updateMessageStatus } from "./db.js";
 import { MAX_CONTAINERS_PER_GROUP, MAX_RETRIES, BASE_RETRY_MS } from "./config.js";
 import type { ContainerInput, McpServerConfig } from "./types.js";
@@ -83,8 +84,12 @@ function drain(group: string): void {
 
 /** Execute a single job: run container, store result, send response. Retry on failure. */
 async function executeJob(job: Job): Promise<void> {
-  const { group, chatId, senderName, text, secrets, channel } = job;
+  const { group, chatId, senderName, text, channel } = job;
   const paths = ensureGroupFolder(group);
+
+  // Refresh auth on every job — tokens expire and the process is long-lived
+  const { secrets, isApiKeyFallback } = await getSecrets();
+  const model = isApiKeyFallback ? "claude-sonnet-4-6" : job.model;
 
   // Load history before this run (user message already stored by caller)
   const recentMessages = getRecentMessages(group);
@@ -97,7 +102,7 @@ async function executeJob(job: Job): Promise<void> {
     secrets,
     messageHistory: messageHistory || undefined,
     mcpServers: job.mcpServers,
-    model: job.model,
+    model,
   };
 
   console.log(`[Queue] Running job for ${senderName} (group: ${group}, attempt: ${job.attempt}/${MAX_RETRIES})`);
