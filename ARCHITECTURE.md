@@ -240,7 +240,8 @@ Created a systemd service (`kuchiclaw.service`) running as a dedicated `kuchicla
 - **No personal account credentials** — dedicated service accounts only
 - **OAuth tokens protected** — `data/oauth.json` is chmod 600, gitignored, never mounted into containers
 - **Sender allowlist** — unknown Telegram users silently ignored
-- **Production hardening** — dedicated `kuchiclaw` system user, systemd `ProtectSystem=strict`, `NoNewPrivileges=yes`
+- **Production hardening** — dedicated `kuchiclaw` system user (uid 999), systemd `ProtectSystem=strict`, `NoNewPrivileges=yes`, `PrivateTmp=yes`
+- **UID alignment** — container `agent` user has uid 999, matching the host `kuchiclaw` user, so mounted volumes (MEMORY.md, CONTEXT.md) are writable inside containers
 
 ---
 
@@ -358,11 +359,20 @@ Hetzner CPX22 (Nuremberg)
 
 **Update procedure:**
 ```bash
+ssh root@46.225.100.26
 cd /opt/kuchiclaw
-git pull
-npm install                        # if deps changed
-docker build -t kuchiclaw-agent .  # if Dockerfile/container/ changed
-sudo systemctl restart kuchiclaw
+sudo -u kuchiclaw git pull
+sudo -u kuchiclaw npm install                        # if deps changed
+sudo -u kuchiclaw docker build -t kuchiclaw-agent .  # if Dockerfile/container/ changed
+systemctl restart kuchiclaw
+journalctl -u kuchiclaw -f                           # verify
+```
+
+**Monitoring:**
+```bash
+journalctl -u kuchiclaw -f              # live logs
+systemctl status kuchiclaw              # service status
+ssh root@46.225.100.26 'docker ps'      # running containers
 ```
 
 **Backup strategy:**
