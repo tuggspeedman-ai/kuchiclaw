@@ -15,6 +15,9 @@ export interface ContainerInput {
   /** Chat ID where the message originated — used for IPC replies */
   chatId?: string;
   secrets: Record<string, string>;
+  /** OAuth refresh token — passed so the container can refresh if the access token was rotated.
+   *  Containers can reach platform.claude.com even when the VPS host is Cloudflare-blocked. */
+  refreshToken?: string;
   /** System prompt built from living files (SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md) */
   systemPrompt?: string;
   /** Recent message history formatted for injection into the prompt */
@@ -80,4 +83,6 @@ export interface ContainerOutput {
   result?: string;
   newSessionId?: string;
   error?: string;
+  /** Fresh OAuth tokens if the container refreshed them — host persists these to oauth.json */
+  newTokens?: { accessToken: string; refreshToken: string; expiresAt: number };
 }

@@ -5,6 +5,7 @@
 import { runContainer } from "./container-runner.js";
 import { ensureGroupFolder } from "./group-folder.js";
 import { getSecrets } from "./auth.js";
+import { getRefreshToken } from "./oauth-refresh.js";
 import { insertMessage, getRecentMessages, formatHistory, updateMessageStatus } from "./db.js";
 import { MAX_CONTAINERS_PER_GROUP, MAX_RETRIES, BASE_RETRY_MS } from "./config.js";
 import type { ContainerInput, McpServerConfig } from "./types.js";
@@ -100,6 +101,9 @@ async function executeJob(job: Job): Promise<void> {
     groupFolder: group,
     chatId,
     secrets,
+    // Refresh token lets the container self-heal when the access token is stale —
+    // containers can reach platform.claude.com even when the VPS host is blocked
+    refreshToken: getRefreshToken() ?? undefined,
     messageHistory: messageHistory || undefined,
     mcpServers: job.mcpServers,
     model,

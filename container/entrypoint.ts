@@ -21,16 +21,24 @@ interface ContainerInput {
   groupFolder: string;
   chatId?: string;
   secrets: Record<string, string>;
+  refreshToken?: string;
   systemPrompt?: string;
   messageHistory?: string;
   mcpServers?: Record<string, McpServerConfig>;
   model?: string;
 }
 
+interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
+
 interface ContainerOutput {
   status: "success" | "error";
   result?: string;
   error?: string;
+  newTokens?: OAuthTokens;
 }
 
 function emit(output: ContainerOutput): void {
@@ -71,6 +79,33 @@ function buildSystemPrompt(): string {
   return parts.join("\n\n---\n\n");
 }
 
+/** Refresh OAuth token via platform.claude.com.
+ *  Called from inside the container because the VPS host is Cloudflare-blocked
+ *  from this endpoint, but containers have unrestricted network access. */
+async function refreshOAuthToken(rt: string): Promise<OAuthTokens | null> {
+  try {
+    const res = await fetch("https://platform.claude.com/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: rt,
+        client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers",
+      }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json() as { access_token: string; refresh_token?: string; expires_in: number };
+    return {
+      accessToken: body.access_token,
+      refreshToken: body.refresh_token ?? rt,
+      expiresAt: Date.now() + body.expires_in * 1000,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Module-level so the catch handler can access it
 let sdkStderr = "";
 
@@ -81,6 +116,20 @@ async function main() {
   // Set secrets into environment — auth tokens for SDK, skill tokens for scripts
   for (const [key, value] of Object.entries(input.secrets)) {
     process.env[key] = value;
+  }
+
+  // Refresh the OAuth token before running — the access token in secrets may be stale
+  // if the Mac's Claude Code rotated it during an active session. The container can
+  // reach platform.claude.com even when the VPS host is blocked by Cloudflare.
+  let newTokens: OAuthTokens | undefined;
+  if (input.refreshToken) {
+    const refreshed = await refreshOAuthToken(input.refreshToken);
+    if (refreshed) {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = refreshed.accessToken;
+      newTokens = refreshed;
+    }
+    // If refresh fails (e.g. token already rotated by a parallel container),
+    // fall through — the access token from secrets may still be valid
   }
 
   let systemPrompt = input.systemPrompt || buildSystemPrompt();
@@ -135,7 +184,7 @@ async function main() {
     }
   }
 
-  emit({ status: "success", result: resultText });
+  emit({ status: "success", result: resultText, ...(newTokens ? { newTokens } : {}) });
 }
 
 main().catch((err) => {

@@ -9,6 +9,7 @@ import {
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
 } from "./config.js";
+import { updateOAuthData } from "./oauth-refresh.js";
 import type { ContainerInput, ContainerOutput } from "./types.js";
 import type { GroupPaths } from "./group-folder.js";
 
@@ -82,6 +83,11 @@ export async function runContainer(input: ContainerInput, paths?: GroupPaths): P
       settle(() => {
         const output = parseOutput(stdout);
         if (output) {
+          // If the container refreshed the OAuth token, persist it so future runs stay valid
+          if (output.newTokens) {
+            updateOAuthData(output.newTokens);
+            console.log("[OAuth] Tokens updated from container refresh");
+          }
           resolve(output);
         } else {
           reject(new Error(

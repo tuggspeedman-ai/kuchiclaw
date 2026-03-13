@@ -16,7 +16,7 @@ const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
 
-interface OAuthData {
+export interface OAuthData {
   accessToken: string;
   refreshToken: string;
   expiresAt: number; // ms since epoch
@@ -75,6 +75,18 @@ async function refreshToken(refreshToken: string): Promise<OAuthData | null> {
     console.error(`[OAuth] Refresh error: ${err}`);
     return null;
   }
+}
+
+/** Get the current refresh token from disk (or cache). Used to pass to containers. */
+export function getRefreshToken(): string | null {
+  if (!cached) cached = loadFromDisk();
+  return cached?.refreshToken ?? null;
+}
+
+/** Persist new OAuth tokens from a container refresh — updates cache and disk. */
+export function updateOAuthData(data: OAuthData): void {
+  cached = data;
+  saveToDisk(data);
 }
 
 /**
