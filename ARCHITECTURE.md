@@ -231,12 +231,43 @@ The `chat_id` and `sender_name` columns were added (rather than parsing them bac
 
 **Key files:** `src/db.ts`, `src/group-queue.ts`, `src/index.ts`
 
+### Phase 11: Living File Backup via Git
+
+The agent's memory files (`groups/*/MEMORY.md`, `groups/*/CONTEXT.md`) evolve over time on the VPS. These need to be backed up independently of the code repo to prevent `git pull` deployments from overwriting them.
+
+**Repo separation:** `groups/` is gitignored in the main `kuchiclaw` repo. Example living files live in `groups/example/` for reference. Real group directories are created at runtime by `ensureGroupFolder()` and backed up to a separate private `kuchiclaw-memory` GitHub repo.
+
+**Trigger:** A systemd timer (`kuchiclaw-backup.timer`) runs daily at 03:00 UTC, invoking `skills/backup.sh` directly on the host — no container or agent involved. This means backups happen even if the orchestrator is down.
+
+**What's backed up:**
+- All `groups/*/MEMORY.md` and `groups/*/CONTEXT.md` files
+- SQLite database snapshot (via `sqlite3 .backup`, safe with WAL mode)
+
+**Git auth:** A private GitHub App with `contents: write` permission, installed only on the `kuchiclaw-memory` repo. The backup script generates a short-lived installation token (1hr) from the app's private key via JWT → GitHub API. No long-lived tokens to rotate.
+
+**Change detection:** `git diff --cached --quiet` after staging — only commits and pushes if there are actual changes. No empty commits, no misleading error output in logs.
+
+**Migration note (one-time):** The commit that gitignores `groups/` also removes `groups/main/MEMORY.md` and `groups/main/CONTEXT.md` from tracking. When you `git pull` this on the VPS, git will delete those files from disk. Back them up before pulling:
+
+```bash
+cp groups/main/MEMORY.md /tmp/memory-backup.md
+cp groups/main/CONTEXT.md /tmp/context-backup.md
+git pull
+cp /tmp/memory-backup.md groups/main/MEMORY.md
+cp /tmp/context-backup.md groups/main/CONTEXT.md
+```
+
+After this one-time migration, future `git pull` commands won't touch `groups/` at all.
+
+**Key files:** `skills/backup.sh`, `deploy/kuchiclaw-backup.service`, `deploy/kuchiclaw-backup.timer`
+
 ### Phase Sequencing Rationale
 
 1. **Phase 0 (Scaffolding)** — Docker image needed before anything else works
 2. **Phase 3 (SQLite) before Phase 4 (Telegram)** — you can't meaningfully integrate a messaging channel without persisting messages
 3. **Phases 5-6 (Queue + IPC) split from Telegram** — get a working bot first, add concurrency and IPC after. This gave us a working bot earlier
 4. **Multi-Group kept last** — refinement of isolation, not a core capability. Everything works with a single group first
+5. **Phases 9-11 (Deploy + Recovery + Backup)** — production-readiness triad. Deploy first, then harden with crash recovery and versioned backups
 
 ---
 
@@ -288,15 +319,21 @@ kuchiclaw/
 │   ├── entrypoint.ts               # Runs inside Docker (reads stdin, builds prompt, calls SDK)
 │   └── package.json                # Container-specific deps (claude-agent-sdk only)
 ├── skills/                         # Simple skills — CLI scripts/API wrappers (ro mount)
-│   └── fastmail.mjs                # Email via JMAP (send, inbox, read, reply)
-├── groups/
-│   └── main/
+│   ├── fastmail.mjs                # Email via JMAP (send, inbox, read, reply)
+│   └── backup.sh                   # Living file + SQLite backup to private git repo
+├── groups/                         # Per-group living files (gitignored, created at runtime)
+│   ├── example/                    # Example files for reference (tracked)
+│   │   ├── MEMORY.md
+│   │   └── CONTEXT.md
+│   └── main/                       # Created by ensureGroupFolder() (gitignored)
 │       ├── MEMORY.md               # Long-lived curated facts (per-group, rw)
 │       ├── CONTEXT.md              # Session working memory (per-group, rw)
 │       └── logs/
 ├── deploy/
 │   ├── setup.sh                    # VPS provisioning script
-│   └── export-oauth.sh             # Export OAuth tokens from macOS keychain
+│   ├── export-oauth.sh             # Export OAuth tokens from macOS keychain
+│   ├── kuchiclaw-backup.service    # systemd unit for daily backup
+│   └── kuchiclaw-backup.timer      # systemd timer (daily 03:00 UTC)
 ├── kuchiclaw.service               # systemd unit file
 └── data/
     ├── kuchiclaw.db                # SQLite database
@@ -387,8 +424,7 @@ ssh root@46.225.100.26 'docker ps'      # running containers
 
 **Backup strategy:**
 - Hetzner auto-backups ($1.40/mo, keeps 7 daily copies)
-- Living file backup via Git for versioned memory history (future milestone)
-- SQLite `.backup` to off-site storage as future enhancement
+- Living file + SQLite backup via Git: `skills/backup.sh` runs daily via systemd timer, commits changes to a private `kuchiclaw-memory` repo. Git auth via private GitHub App (short-lived tokens, `contents: write` on one repo). See Phase 11 for details.
 
 ---
 
@@ -406,7 +442,6 @@ Deferred ideas worth revisiting once the core system is stable:
 - **Apple Container support** — native macOS containers for lower overhead on dev machines.
 - **WhatsApp channel** — second messaging adapter using the Channel interface.
 - **Email channel adapter** — email as an input channel (poll FastMail inbox via JMAP → route to agent → reply). Different from the FastMail skill (which lets the agent proactively send email).
-- **Living file backup via Git** — periodic git commit + push of living files to a private repo for versioned history (M11).
 - **Global container cap** — `MAX_CONCURRENT_CONTAINERS` across all groups, in addition to the per-group cap.
 
 ---

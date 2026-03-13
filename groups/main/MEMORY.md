@@ -1,5 +1,0 @@
-# Memory
-
-## Lessons
-
-## Facts

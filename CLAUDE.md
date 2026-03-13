@@ -21,7 +21,7 @@ Minimal AI agent framework inspired by NanoClaw/OpenClaw. Node.js + TypeScript +
 
 ## Current State
 
-M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), M8 (multi-group isolation), M9 (deploy to Hetzner), and M10 (crash recovery) are complete.
+M0 (scaffolding), M1 (basic agent loop), M2 (persistent context + web tools), M3 (SQLite + message history), M4 (Telegram integration), M5 (orchestrator + queue), M6 (IPC + skills system), M7 (scheduled tasks + heartbeat), M8 (multi-group isolation), M9 (deploy to Hetzner), and M10 (crash recovery) are complete. M11 (living file backup via git) is in progress.
 
 Working flow (CLI): `npx tsx src/cli.ts "prompt"` or `npx tsx src/cli.ts --group mygroup "prompt"` → stores prompt in SQLite → loads recent message history → spawns ephemeral Docker container with living files mounted + message history injected → Claude Agent SDK runs inside with system prompt from SOUL.md + TOOLS.md + MEMORY.md + CONTEXT.md + recent messages → response returned via sentinel markers → response stored in SQLite. Use `--history` to view conversation log.
 
@@ -52,17 +52,18 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `TOOLS.md` — Available tools documentation including IPC, skills, and scheduled tasks (global, read-only)
 - `HEARTBEAT.md` — Self-maintenance checklist for heartbeat tasks (global, read-only)
 - `mcp-servers.json` — MCP server configurations (empty by default, add servers as needed)
-- `skills/` — Simple skills directory (CLI scripts/API wrappers, mounted read-only into containers). Includes `fastmail.mjs` (email via JMAP as koochi@fastmail.com)
-- `groups/main/MEMORY.md` — Per-group durable memory (read-write)
-- `groups/main/CONTEXT.md` — Per-group session scratchpad (read-write)
+- `skills/` — Simple skills directory (CLI scripts/API wrappers, mounted read-only into containers). Includes `fastmail.mjs` (email via JMAP as koochi@fastmail.com), `backup.sh` (living file + SQLite backup to private git repo)
+- `groups/example/` — Example living files for reference (tracked in git). Real groups are gitignored — created at runtime by `ensureGroupFolder()`
 - `data/kuchiclaw.db` — SQLite database (auto-created on first run)
 - `data/ipc/` — IPC request directory (containers write here, host polls)
 - `data/oauth.json` — OAuth tokens for auto-refresh (accessToken, refreshToken, expiresAt; chmod 600, gitignored)
 
-**Deployment (M9):**
+**Deployment (M9) + Backup (M11):**
 - `kuchiclaw.service` — systemd unit file: runs as `kuchiclaw` user, `Restart=always`, `EnvironmentFile=/opt/kuchiclaw/.env`, security hardening (NoNewPrivileges, ProtectSystem=strict, PrivateTmp=yes)
 - `deploy/setup.sh` — VPS provisioning script: installs Docker + Node.js 20, creates `kuchiclaw` user, clones repo, builds Docker image, installs systemd service
 - `deploy/export-oauth.sh` — Exports OAuth tokens from macOS keychain to `data/oauth.json` for transfer to VPS
+- `deploy/kuchiclaw-backup.service` — systemd unit for daily living file + SQLite backup
+- `deploy/kuchiclaw-backup.timer` — systemd timer triggering backup daily at 03:00 UTC
 
 **Reference:**
 - `project-plan.md` — Detailed milestones and architectural decisions
@@ -94,3 +95,5 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `.env` file at project root for local secrets (gitignored). Loaded by `dotenv/config` in entrypoints. Contains `TELEGRAM_BOT_TOKEN`, `FASTMAIL_API_TOKEN`, `MAIN_CHAT_ID` (channel-qualified, e.g., `tg-402431039`), `ALLOWED_SENDER_IDS` (comma-separated, optional).
 - `data/oauth.json` stores OAuth tokens (chmod 600, gitignored). Never mounted into containers.
 - Production: dedicated `kuchiclaw` system user owns `/opt/kuchiclaw/`, runs the systemd service, is in `docker` group. `.env` and `data/oauth.json` are chmod 600.
+- `groups/` is gitignored in the main repo — agent memory is backed up to a separate private `kuchiclaw-memory` repo via `skills/backup.sh` on a systemd timer. This prevents `git pull` deployments from overwriting the agent's evolved memory.
+- Backup git auth via private GitHub App: short-lived tokens (1hr), scoped `contents: write` on one repo. App private key stored on host at `data/github-app/`, never enters containers.
