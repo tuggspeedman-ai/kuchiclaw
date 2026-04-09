@@ -92,16 +92,18 @@ export class TelegramChannel implements Channel {
     if (!this.bot) throw new Error("Telegram bot not connected");
 
     // Chunk long messages to stay within Telegram's limit
-    const chunks = splitMessage(text, TELEGRAM_MAX_LENGTH);
+    // Use 4000 (not 4096) to leave headroom for HTML tag overhead
+    const chunks = splitMessage(text, TELEGRAM_MAX_LENGTH - 96);
     for (const chunk of chunks) {
       const numericId = Number(chatId);
       try {
-        // Try MarkdownV2 first for rich formatting
-        await this.bot.sendMessage(numericId, escapeMarkdownV2(chunk), {
-          parse_mode: "MarkdownV2",
+        // Convert standard Markdown to Telegram HTML
+        await this.bot.sendMessage(numericId, markdownToHtml(chunk), {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
         });
       } catch {
-        // Fall back to plain text if MarkdownV2 parsing fails
+        // Fall back to plain text if HTML parsing fails
         await this.bot.sendMessage(numericId, chunk);
       }
     }
@@ -132,15 +134,70 @@ export class TelegramChannel implements Channel {
 }
 
 /**
- * Escape text for Telegram MarkdownV2.
- * Preserves bold (**), italic (_), code (`), and links []() —
- * escapes all other special chars that MarkdownV2 requires.
+ * Convert standard Markdown to Telegram-compatible HTML.
+ * Handles: code blocks, inline code, bold, italic, links, headers.
+ * Strips unsupported syntax (horizontal rules, images).
  */
-function escapeMarkdownV2(text: string): string {
-  // Characters that must be escaped in MarkdownV2 (outside of formatting)
-  // We preserve: * _ ` [ ] ( ) for intentional formatting
-  // Escape: . ! - # + = | { } > ~
-  return text.replace(/([.!\-#+=|{}>"~\\])/g, "\\$1");
+function markdownToHtml(text: string): string {
+  // Step 1: Extract code blocks and inline code to protect them from further processing
+  const codeBlocks: string[] = [];
+  const placeholder = (i: number) => `\x00CODE${i}\x00`;
+
+  // Fenced code blocks (```...```)
+  let result = text.replace(/```(?:\w*\n)?([\s\S]*?)```/g, (_match, code: string) => {
+    const i = codeBlocks.length;
+    codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
+    return placeholder(i);
+  });
+
+  // Inline code (`...`)
+  result = result.replace(/`([^`\n]+)`/g, (_match, code: string) => {
+    const i = codeBlocks.length;
+    codeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+    return placeholder(i);
+  });
+
+  // Step 2: Escape HTML special chars in remaining text (not inside code)
+  result = escapeHtml(result);
+
+  // Step 3: Convert markdown formatting to HTML
+
+  // Headers (# ... ) → just the text (OpenClaw flattens these)
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, "$1");
+
+  // Bold: **text** or __text__
+  result = result.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  result = result.replace(/__(.+?)__/g, "<b>$1</b>");
+
+  // Italic: *text* or _text_ (but not inside words like some_var_name)
+  result = result.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, "<i>$1</i>");
+  result = result.replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
+
+  // Strikethrough: ~~text~~
+  result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Blockquotes: > text
+  result = result.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>");
+
+  // Links: [text](url)
+  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Horizontal rules (---, ***) → just remove
+  result = result.replace(/^[-*_]{3,}\s*$/gm, "");
+
+  // Step 4: Restore code blocks
+  for (let i = 0; i < codeBlocks.length; i++) {
+    result = result.replace(placeholder(i), codeBlocks[i]);
+  }
+
+  return result.trim();
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /** Split text into chunks that fit within maxLen, breaking at newlines when possible */
