@@ -117,6 +117,40 @@ node /workspace/skills/fastmail.mjs reply <messageId> "Reply body text"
 ```
 Threading headers (In-Reply-To, References) are set automatically.
 
+### calendar (calendar invites)
+
+Create, update, and cancel Google Calendar events by sending iCalendar (.ics) email invitations. Recipients' Gmail auto-detects the invite and adds it to their calendar.
+
+**Create an event:**
+```bash
+node /workspace/skills/calendar.mjs create '{"title":"Dentist","start":"2026-04-15T10:00:00+03:00","duration":"1h","attendees":["jon@gmail.com","wife@gmail.com"],"location":"Dr Smith","description":"Annual checkup"}'
+```
+
+Fields:
+- `title` (required) — event name
+- `start` (required) — ISO 8601 datetime with timezone offset (e.g., `+03:00` for Israel)
+- `duration` (required, or use `end`) — human format (`1h`, `30m`, `1h30m`) or ISO 8601 (`PT1H30M`)
+- `end` — ISO 8601 datetime (alternative to `duration`)
+- `attendees` (required) — array of email addresses to invite
+- `location` — event location
+- `description` — event description
+
+Returns a `UID` — **save this to MEMORY.md** so you can update or cancel the event later.
+
+**Update an event:**
+```bash
+node /workspace/skills/calendar.mjs update "<uid>" '{"title":"Dentist (rescheduled)","start":"2026-04-16T10:00:00+03:00","duration":"1h","attendees":["jon@gmail.com","wife@gmail.com"],"sequence":1}'
+```
+
+Must include all original attendees. The `sequence` field should increment with each update (1 for first update, 2 for second, etc.).
+
+**Cancel an event:**
+```bash
+node /workspace/skills/calendar.mjs cancel "<uid>" '{"attendees":["jon@gmail.com","wife@gmail.com"],"title":"Dentist"}'
+```
+
+Must include all original attendees so they receive the cancellation.
+
 ## Workspace
 
 Your workspace is `/workspace`. You can read and write files here.
