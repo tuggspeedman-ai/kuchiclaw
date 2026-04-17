@@ -147,12 +147,16 @@ async function main() {
     systemPrompt += "\n\n---\n\n" + input.messageHistory;
   }
 
-  // Build SDK options
+  // Build SDK options.
+  // maxTurns is a circuit breaker against runaway loops, not a primary control —
+  // set it high enough that normal multi-step skills finish (read docs → run tool
+  // → summarize is already ~4 turns), low enough to kill a misbehaving agent.
+  const maxTurns = 20;
   const sdkOptions: Record<string, unknown> = {
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     persistSession: false,
-    maxTurns: 3,
+    maxTurns,
     tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
     cwd: "/workspace",
     systemPrompt,
@@ -172,13 +176,36 @@ async function main() {
   });
 
   let resultText = "";
+  // Track the last text the agent produced so we can fall back to it when the
+  // run ends without a clean success result (e.g. error_max_turns after a
+  // tool call has already completed the real work).
+  let lastAssistantText = "";
 
   for await (const message of session) {
-    if (message.type === "result") {
-      if (message.subtype === "success") {
-        resultText = message.result;
+    const m = message as { type: string; subtype?: string; result?: string; message?: { content?: unknown } };
+
+    if (m.type === "assistant" && m.message?.content && Array.isArray(m.message.content)) {
+      const texts = (m.message.content as Array<{ type: string; text?: string }>)
+        .filter((b) => b.type === "text" && typeof b.text === "string")
+        .map((b) => b.text as string);
+      if (texts.length > 0) lastAssistantText = texts.join("\n");
+    }
+
+    if (m.type === "result") {
+      if (m.subtype === "success") {
+        resultText = m.result ?? "";
+      } else if (m.subtype === "error_max_turns") {
+        // Turn cap is a safety valve, not a logical failure. The agent may have
+        // already finished the real work (e.g. sent an email, created a task)
+        // and just run out of budget before summarizing. Return whatever it last
+        // said, with a hint that the reply may be incomplete.
+        resultText = lastAssistantText
+          ? `${lastAssistantText}\n\n_(hit the ${maxTurns}-turn limit — reply may be incomplete)_`
+          : `Hit the ${maxTurns}-turn limit before producing a response. The work may have partially completed — check downstream effects (emails, tasks, memory).`;
       } else {
-        emit({ status: "error", error: `Agent error: ${JSON.stringify(message)}\nstderr: ${sdkStderr}` });
+        const detail = m.subtype ?? "unknown";
+        if (sdkStderr) console.error(`[entrypoint] SDK stderr on ${detail}: ${sdkStderr}`);
+        emit({ status: "error", error: `Agent stopped: ${detail}` });
         return;
       }
     }
@@ -188,6 +215,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  emit({ status: "error", error: `${String(err)}\nstderr: ${sdkStderr}` });
+  const msg = err instanceof Error ? err.message : String(err);
+  if (sdkStderr) console.error(`[entrypoint] SDK stderr: ${sdkStderr}`);
+  emit({ status: "error", error: `Container crashed: ${msg}` });
   process.exit(1);
 });
