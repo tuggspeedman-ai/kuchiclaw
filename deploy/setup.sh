@@ -56,9 +56,10 @@ if [ ! -f groups/main/CONTEXT.md ]; then
   sudo -u kuchiclaw bash -c 'echo "# Context" > groups/main/CONTEXT.md'
 fi
 
-# 6. Install systemd service
+# 6. Install systemd service + alert watchdog
 echo "[6/6] Installing systemd service..."
 cp /opt/kuchiclaw/kuchiclaw.service /etc/systemd/system/
+cp /opt/kuchiclaw/deploy/kuchiclaw-alert@.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable kuchiclaw
 
