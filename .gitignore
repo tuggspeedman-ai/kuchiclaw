@@ -8,3 +8,4 @@ kickoff-prompt.md
 tasks/
 groups/*
 !groups/example/
+.DS_Store

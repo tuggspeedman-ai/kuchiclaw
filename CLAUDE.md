@@ -59,8 +59,10 @@ Working flow (Telegram): `npx tsx src/index.ts` (secrets loaded from `.env`) →
 - `data/oauth.json` — OAuth tokens for auto-refresh (accessToken, refreshToken, expiresAt; chmod 600, gitignored)
 
 **Deployment (M9) + Backup (M11):**
-- `kuchiclaw.service` — systemd unit file: runs as `kuchiclaw` user, `Restart=always`, `EnvironmentFile=/opt/kuchiclaw/.env`, security hardening (NoNewPrivileges, ProtectSystem=strict, PrivateTmp=yes)
-- `deploy/setup.sh` — VPS provisioning script: installs Docker + Node.js 20, creates `kuchiclaw` user, clones repo, builds Docker image, installs systemd service
+- `kuchiclaw.service` — systemd unit file: runs as `kuchiclaw` user, `Restart=always` with `StartLimitBurst=5`/`StartLimitIntervalSec=300` so repeated crashes trip the unit into `failed` state and fire `OnFailure=kuchiclaw-alert@%n.service`. `EnvironmentFile=/opt/kuchiclaw/.env`, security hardening (NoNewPrivileges, ProtectSystem=strict, PrivateTmp=yes)
+- `deploy/kuchiclaw-alert@.service` — Templated oneshot unit invoked by `OnFailure`. Runs `deploy/alert.sh` with the failed unit name as `%i`
+- `deploy/alert.sh` — Telegram alert when systemd gives up restarting kuchiclaw. Curls Telegram's `sendMessage` API directly using `TELEGRAM_BOT_TOKEN` + `MAIN_CHAT_ID` from `.env`, includes last 20 journal lines. Has zero dependency on the kuchiclaw process — that's the whole point
+- `deploy/setup.sh` — VPS provisioning script: installs Docker + Node.js 20, creates `kuchiclaw` user, clones repo, builds Docker image, installs both systemd units
 - `deploy/export-oauth.sh` — Exports OAuth tokens from macOS keychain to `data/oauth.json` for transfer to VPS
 - `deploy/kuchiclaw-backup.service` — systemd unit for daily living file + SQLite backup
 - `deploy/kuchiclaw-backup.timer` — systemd timer triggering backup daily at 03:00 UTC
