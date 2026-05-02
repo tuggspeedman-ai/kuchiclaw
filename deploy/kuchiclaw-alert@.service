@@ -1,0 +1,11 @@
+# Templated alert unit triggered by `OnFailure=` on kuchiclaw.service.
+# %i is the failed unit's name (passed via OnFailure=kuchiclaw-alert@%n.service).
+# Runs as root so it can read the .env file containing TELEGRAM_BOT_TOKEN —
+# the alert path must not depend on the kuchiclaw user or process being healthy.
+[Unit]
+Description=Telegram alert for failed unit %i
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/kuchiclaw/.env
+ExecStart=/opt/kuchiclaw/deploy/alert.sh %i

@@ -3,6 +3,13 @@ Description=KuchiClaw AI Agent
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
+# Fire a Telegram alert when systemd gives up restarting (StartLimit hit).
+# Without StartLimit set, Restart=always loops forever and the unit never
+# enters failed state — that's how the OAuth crash loop ran silently for
+# 8 days. With the limit, repeated crashes surface as a notification.
+OnFailure=kuchiclaw-alert@%n.service
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
