@@ -8,19 +8,20 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install container dependencies (claude-agent-sdk bundles the full CLI).
+# Install container dependencies (claude-agent-sdk bundles the full CLI) +
+# tsx for the TypeScript entrypoint, then drop the musl SDK binaries.
+#
 # The SDK ships per-platform native binaries as optionalDependencies and its
 # resolver checks the musl variant before glibc on Linux. npm 10 doesn't
 # filter optional deps by libc, so both binaries get installed and the
 # resolver picks the musl one — which the Debian kernel can't exec, surfacing
-# as "claude not found". Delete the musl variant so resolver falls through.
+# as "claude not found". The cleanup must be the FINAL step of the install
+# RUN: any later `npm install` re-resolves the tree and pulls musl back in.
 COPY container/package.json ./
 RUN npm install --production && \
+    npm install tsx && \
     rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl \
            node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl
-
-# tsx for running TypeScript entrypoint
-RUN npm install tsx
 
 # Copy entrypoint
 COPY container/entrypoint.ts ./
