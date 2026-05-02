@@ -9,12 +9,15 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Install container dependencies (claude-agent-sdk bundles the full CLI).
-# --libc=glibc skips the musl native-binary variant of the SDK; npm filters
-# optional deps by os/cpu automatically but not libc, and the SDK's binary
-# resolver tries musl before glibc — so without this flag the kernel fails
-# to exec the wrong binary and the SDK reports "claude not found".
+# The SDK ships per-platform native binaries as optionalDependencies and its
+# resolver checks the musl variant before glibc on Linux. npm 10 doesn't
+# filter optional deps by libc, so both binaries get installed and the
+# resolver picks the musl one — which the Debian kernel can't exec, surfacing
+# as "claude not found". Delete the musl variant so resolver falls through.
 COPY container/package.json ./
-RUN npm install --production --libc=glibc
+RUN npm install --production && \
+    rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl \
+           node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl
 
 # tsx for running TypeScript entrypoint
 RUN npm install tsx
