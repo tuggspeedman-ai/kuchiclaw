@@ -8,9 +8,13 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install container dependencies (claude-agent-sdk bundles the full CLI)
+# Install container dependencies (claude-agent-sdk bundles the full CLI).
+# --libc=glibc skips the musl native-binary variant of the SDK; npm filters
+# optional deps by os/cpu automatically but not libc, and the SDK's binary
+# resolver tries musl before glibc — so without this flag the kernel fails
+# to exec the wrong binary and the SDK reports "claude not found".
 COPY container/package.json ./
-RUN npm install --production
+RUN npm install --production --libc=glibc
 
 # tsx for running TypeScript entrypoint
 RUN npm install tsx
